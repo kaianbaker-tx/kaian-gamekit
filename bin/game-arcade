@@ -22,6 +22,11 @@ slugify() {
 
 mkdir -p "$ARCADE/shots"
 
+# Checking with GitHub is what makes a PLAY button trustworthy. Without gh
+# we fall back to guessing from the files on this laptop, and say so.
+HAVE_GH=0
+gh auth status >/dev/null 2>&1 && HAVE_GH=1
+
 echo ""
 echo "  Building your arcade..."
 echo ""
@@ -62,12 +67,34 @@ for DIR in "$GAMES"/*; do
     [ -n "$OWNER" ] && [ -n "$REPO" ] && URL="https://$OWNER.github.io/$REPO/"
   fi
 
-  # A Godot game is only playable once a web build exists. A one-file web
-  # game is playable the moment it has somewhere to live.
-  PLAYABLE=0
+  # Is there something to serve? This is the local half of the answer.
+  READY=0
   if [ -n "$URL" ]; then
-    if [ "$KIND" = "web" ]; then PLAYABLE=1
-    elif [ -f "$DIR/docs/index.html" ]; then PLAYABLE=1
+    if [ "$KIND" = "web" ]; then READY=1
+    elif [ -f "$DIR/docs/index.html" ]; then READY=1
+    fi
+  fi
+
+  # Local evidence is not enough. A repo can have a remote and a built page
+  # and still serve a 404 - if it is private, or Pages was never switched on.
+  # When we can ask GitHub, ask it, and believe the answer over the guess.
+  PLAYABLE=0
+  WHY=""
+  if [ "$READY" = "1" ]; then
+    if [ "$HAVE_GH" = "1" ]; then
+      PSTAT="$(gh api "repos/$OWNER/$REPO/pages" -q .status 2>/dev/null)"
+      case "$PSTAT" in
+        built)    PLAYABLE=1 ;;
+        building) WHY="GitHub is still building it" ;;
+        *)        VIS="$(gh api "repos/$OWNER/$REPO" -q .visibility 2>/dev/null)"
+                  if [ "$VIS" = "private" ]; then
+                    WHY="the repo is private, so Pages can't serve it"
+                  else
+                    WHY="Pages isn't switched on for this repo"
+                  fi ;;
+      esac
+    else
+      PLAYABLE=1      # can't check without gh - fall back to the local guess
     fi
   fi
   [ "$PLAYABLE" = "1" ] && LIVE=$((LIVE+1))
@@ -94,7 +121,9 @@ for DIR in "$GAMES"/*; do
       <div class=\"tag play\">PLAY</div>
     </a>"
   else
-    if [ "$KIND" = "web" ]; then TODO="not pushed yet"; else TODO="not shared yet"; fi
+    if [ -n "$WHY" ]; then TODO="not online yet"
+    elif [ "$KIND" = "web" ]; then TODO="not pushed yet"
+    else TODO="not shared yet"; fi
     CARDS="$CARDS
     <div class=\"card off\">
       <div class=\"pic\">$PIC</div>
@@ -105,6 +134,8 @@ for DIR in "$GAMES"/*; do
 
   if [ "$PLAYABLE" = "1" ]; then
     STATUS="online"
+  elif [ -n "$WHY" ]; then
+    STATUS="-> $WHY"
   elif [ "$KIND" = "web" ]; then
     STATUS="-> run import-web-games, or push it"
   else
@@ -181,6 +212,9 @@ HTML
 touch "$ARCADE/.nojekyll"
 
 echo ""
+if [ "$HAVE_GH" = "0" ]; then
+  echo "  (GitHub isn't logged in, so I guessed which games are online.)"
+fi
 echo "  Page built: $ARCADE/index.html"
 
 if [ "$PUSH" = "0" ]; then
