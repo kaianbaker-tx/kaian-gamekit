@@ -29,6 +29,7 @@ Then two manual steps `install.sh` will remind you about:
 | `share-game` | build web version, push, copy link to clipboard |
 | `game-arcade` | one page with every game on it; `--push` puts it online |
 | `game-idea` | three things he could make next; `--go` makes one |
+| `import-web-games <folder>` | turn loose one-file .html games into real games with their own repos |
 | `game-shot "added jumping"` | screenshot into DEVLOG.md |
 | `game-archaeology` | find every game he ever started, on disk **and** in his Claude history |
 | `game-doctor` | check Godot, templates, GitHub login, index |

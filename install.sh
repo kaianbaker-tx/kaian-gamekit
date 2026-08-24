@@ -111,6 +111,7 @@ cat <<'MSG'
     share-game                  put it online and get the link
     game-arcade --push          put ALL his games on one page
     game-idea                   three things he could make next
+    import-web-games <folder>   rescue loose .html games into ~/Games
     game-shot "added jumping"   save a picture for the devlog
     fix-games                   tidy up the games that already exist
     game-doctor                 check everything still works

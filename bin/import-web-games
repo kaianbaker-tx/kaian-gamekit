@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# import-web-games <folder> [--go]
+#
+# Kaian makes a lot of games that are one single .html file. This finds them,
+# gives each one its own folder, its own repo, and its own web address.
+#
+#   import-web-games ~/"sipider piza"        show the plan, change nothing
+#   import-web-games ~/"sipider piza" --go   actually do it
+#
+# Safe to run again: anything already imported is skipped, not duplicated.
+# Written for the bash that ships with macOS (3.2).
+set -uo pipefail          # not -e: one bad game must not stop the rest
+
+GAMES="$HOME/Games"
+GH_USER="${GAME_GH_USER:-kaianbaker-tx}"
+SRC=""
+GO=0
+
+for a in "$@"; do
+  case "$a" in
+    --go) GO=1 ;;
+    -*)   echo "Don't know the option '$a'"; exit 2 ;;
+    *)    SRC="$a" ;;
+  esac
+done
+
+[ -n "$SRC" ] || { echo "Which folder? e.g.  import-web-games ~/\"sipider piza\""; exit 2; }
+[ -d "$SRC" ] || { echo "There's no folder called '$SRC'."; exit 2; }
+SRC="$(cd "$SRC" && pwd)"
+
+# "BOOMCRAFT - every block is a coin flip"  ->  "Boomcraft"
+# "Kirby: Star Blast"                       ->  "Kirby Star Blast"
+pretty() {
+  # Note: the dashes are matched as whole strings, not inside [ ]. A bracket
+  # class splits a multi-byte dash into bytes and leaves half of it behind.
+  printf '%s' "$1" \
+    | sed 's/ —.*$//; s/ –.*$//; s/ - .*$//' \
+    | tr ':' ' ' \
+    | sed 's/  */ /g; s/^ //; s/ $//' \
+    | awk '{
+        # Only rewrite a title that is shouting all the way through, so a
+        # deliberate "3D" or "II" in a normal title survives untouched.
+        if ($0 == toupper($0) && $0 != tolower($0))
+          for (i = 1; i <= NF; i++)
+            $i = toupper(substr($i,1,1)) tolower(substr($i,2));
+        print
+      }'
+}
+
+slug() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed "s/'//g; s/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//"
+}
+
+echo ""
+if [ "$GO" = 1 ]; then echo "  Importing web games from: $SRC"
+else echo "  PLAN ONLY - nothing will change. Add --go to do it."; fi
+echo ""
+
+mkdir -p "$GAMES"
+FOUND=0
+DONE=0
+
+for F in "$SRC"/*.html; do
+  [ -f "$F" ] || continue
+  FOUND=$((FOUND+1))
+  BASE="$(basename "$F")"
+
+  TITLE="$(grep -o -m1 '<title>[^<]*</title>' "$F" 2>/dev/null | sed 's/<[^>]*>//g')"
+  [ -n "$TITLE" ] || TITLE="${BASE%.html}"
+  NAME="$(pretty "$TITLE")"
+  [ -n "$NAME" ] || NAME="${BASE%.html}"
+  SLUG="$(slug "$NAME")"
+  DEST="$GAMES/$NAME"
+
+  printf '  %-26s -> %s\n' "$BASE" "$NAME"
+
+  if [ -e "$DEST" ]; then
+    echo "     skipped - "$NAME" is already in Games"
+    echo ""
+    continue
+  fi
+
+  echo "     folder:  $DEST"
+  echo "     repo:    $GH_USER/$SLUG"
+  echo "     link:    https://$GH_USER.github.io/$SLUG/"
+
+  if [ "$GO" = 0 ]; then echo ""; continue; fi
+
+  mkdir -p "$DEST" || { echo "     FAILED to make the folder"; echo ""; continue; }
+  if ! mv "$F" "$DEST/index.html"; then
+    echo "     FAILED to move the file - left it alone"
+    rmdir "$DEST" 2>/dev/null
+    echo ""; continue
+  fi
+
+  touch "$DEST/.nojekyll"      # stops GitHub hiding files that start with _
+
+  cat > "$DEST/README.md" <<MD
+# $NAME
+
+Play it here: **https://$GH_USER.github.io/$SLUG/**
+
+Made by Kaian. It's one single web page - open \`index.html\` to work on it.
+MD
+
+  cat > "$DEST/CLAUDE.md" <<MD
+# $NAME
+
+Kaian is 10. He reads everything you write, and he talks to you with
+voice-to-text, so his spelling will be off - work out what he meant and
+keep going instead of asking him to spell it again.
+
+## This game
+
+- It is ONE file: \`index.html\`. HTML, CSS and JavaScript all live in there.
+- Keep it one file. No build step, no npm, no extra folders.
+- It is published straight from the top of the repo by GitHub Pages,
+  so whatever is in \`index.html\` on \`main\` is what people play.
+
+## How to talk to him
+
+- Short sentences. One idea at a time.
+- Say what you are about to do, then do it, then say what changed.
+- Never dump a wall of code at him. Explain the one line that matters.
+MD
+
+  git -C "$DEST" init -q -b main
+  git -C "$DEST" add -A
+  git -C "$DEST" -c user.name="Kaian" -c user.email="kaian@local" \
+      commit -q -m "Add $NAME" || echo "     (could not save the first version)"
+
+  if gh auth status >/dev/null 2>&1; then
+    if gh repo create "$GH_USER/$SLUG" --public --source="$DEST" --remote=origin --push >/dev/null 2>&1; then
+      # Pages serves a one-file game straight from the top of the repo.
+      gh api -X POST "repos/$GH_USER/$SLUG/pages" \
+        -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 \
+        || gh api -X PUT "repos/$GH_USER/$SLUG/pages" \
+        -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 || true
+      echo "     online:  https://$GH_USER.github.io/$SLUG/"
+    else
+      echo "     (GitHub repo not created - maybe the name is taken. Files are safe.)"
+    fi
+  else
+    echo "     (not on GitHub - run 'gh auth login' then run this again)"
+  fi
+
+  ln -sfn "$DEST" "$HOME/Desktop/$NAME" 2>/dev/null
+  DONE=$((DONE+1))
+  echo "     done"
+  echo ""
+done
+
+if [ "$FOUND" = 0 ]; then
+  echo "  No .html files in $SRC"
+  echo ""
+  exit 0
+fi
+
+if [ "$GO" = 0 ]; then
+  echo "  Looks right?  Run the same thing with --go on the end."
+  echo ""
+else
+  echo "  Imported $DONE of $FOUND."
+  echo "  Now put them all on one page:  game-arcade --push"
+  echo ""
+fi

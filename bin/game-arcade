@@ -30,10 +30,24 @@ CARDS=""
 COUNT=0
 LIVE=0
 
-while IFS= read -r PROJ; do
-  DIR="$(dirname "$PROJ")"
-  NAME="$(sed -n 's/^config\/name="\(.*\)"/\1/p' "$PROJ" | head -1)"
+# Two kinds of game live in ~/Games: Godot projects, which publish a build
+# into docs/, and one-file web games, which ARE the page. Both belong here.
+for DIR in "$GAMES"/*; do
+  [ -d "$DIR" ] || continue
+
+  if [ -f "$DIR/project.godot" ]; then
+    KIND="godot"
+    NAME="$(sed -n 's/^config\/name="\(.*\)"/\1/p' "$DIR/project.godot" | head -1)"
+  elif [ -f "$DIR/index.html" ]; then
+    # Use the folder name, not the <title>. The folder name is the one that
+    # matches the repo and the web address; a <title> often trails a tagline.
+    KIND="web"
+    NAME="$(basename "$DIR")"
+  else
+    continue
+  fi
   [ -n "$NAME" ] || NAME="$(basename "$DIR")"
+
   SLUG="$(slugify "$NAME")"
   COUNT=$((COUNT+1))
 
@@ -48,9 +62,14 @@ while IFS= read -r PROJ; do
     [ -n "$OWNER" ] && [ -n "$REPO" ] && URL="https://$OWNER.github.io/$REPO/"
   fi
 
-  # Only call it playable if a web build actually exists.
+  # A Godot game is only playable once a web build exists. A one-file web
+  # game is playable the moment it has somewhere to live.
   PLAYABLE=0
-  [ -n "$URL" ] && [ -f "$DIR/docs/index.html" ] && PLAYABLE=1
+  if [ -n "$URL" ]; then
+    if [ "$KIND" = "web" ]; then PLAYABLE=1
+    elif [ -f "$DIR/docs/index.html" ]; then PLAYABLE=1
+    fi
+  fi
   [ "$PLAYABLE" = "1" ] && LIVE=$((LIVE+1))
 
   # Newest screenshot becomes the picture on the card.
@@ -75,17 +94,25 @@ while IFS= read -r PROJ; do
       <div class=\"tag play\">PLAY</div>
     </a>"
   else
+    if [ "$KIND" = "web" ]; then TODO="not pushed yet"; else TODO="not shared yet"; fi
     CARDS="$CARDS
     <div class=\"card off\">
       <div class=\"pic\">$PIC</div>
       <div class=\"name\">$E_NAME</div>
-      <div class=\"tag soon\">not shared yet</div>
+      <div class=\"tag soon\">$TODO</div>
     </div>"
   fi
 
-  printf '   %-28s %s\n' "$NAME" \
-    "$([ "$PLAYABLE" = "1" ] && echo "online" || echo "-> run share-game")"
-done < <(find "$GAMES" -maxdepth 2 -name project.godot 2>/dev/null | sort)
+  if [ "$PLAYABLE" = "1" ]; then
+    STATUS="online"
+  elif [ "$KIND" = "web" ]; then
+    STATUS="-> run import-web-games, or push it"
+  else
+    STATUS="-> run share-game"
+  fi
+  printf '   %-28s %s\n' "$NAME" "$STATUS"
+done
+
 
 if [ "$COUNT" = "0" ]; then
   echo "   You have no games yet."
