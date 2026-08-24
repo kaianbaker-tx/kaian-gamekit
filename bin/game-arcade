@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# game-arcade [--push]  - one page with every game on it.
+#
+#   game-arcade          build the page and open it on this laptop
+#   game-arcade --push   also put it online so you can send one link
+#
+set -uo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/game-lib.sh"
+
+GAMES="$HOME/Games"
+ARCADE="$HOME/Arcade"
+GH_USER="${GAME_GH_USER:-kaianbaker-tx}"
+PUSH=0
+[ "${1:-}" = "--push" ] && PUSH=1
+
+esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'; }
+
+slugify() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//'
+}
+
+mkdir -p "$ARCADE/shots"
+
+echo ""
+echo "  Building your arcade..."
+echo ""
+
+CARDS=""
+COUNT=0
+LIVE=0
+
+while IFS= read -r PROJ; do
+  DIR="$(dirname "$PROJ")"
+  NAME="$(sed -n 's/^config\/name="\(.*\)"/\1/p' "$PROJ" | head -1)"
+  [ -n "$NAME" ] || NAME="$(basename "$DIR")"
+  SLUG="$(slugify "$NAME")"
+  COUNT=$((COUNT+1))
+
+  # Where is it online? Work it out from the GitHub remote, not a guess.
+  URL=""
+  REMOTE="$(git -C "$DIR" remote get-url origin 2>/dev/null || true)"
+  if [ -n "$REMOTE" ]; then
+    STRIPPED="${REMOTE%.git}"
+    REPO="${STRIPPED##*/}"
+    REST="${STRIPPED%/$REPO}"
+    OWNER="${REST##*[:/]}"
+    [ -n "$OWNER" ] && [ -n "$REPO" ] && URL="https://$OWNER.github.io/$REPO/"
+  fi
+
+  # Only call it playable if a web build actually exists.
+  PLAYABLE=0
+  [ -n "$URL" ] && [ -f "$DIR/docs/index.html" ] && PLAYABLE=1
+  [ "$PLAYABLE" = "1" ] && LIVE=$((LIVE+1))
+
+  # Newest screenshot becomes the picture on the card.
+  SHOT="$(ls -t "$DIR"/shots/*.png 2>/dev/null | head -1)"
+  THUMB=""
+  if [ -n "$SHOT" ]; then
+    cp "$SHOT" "$ARCADE/shots/$SLUG.png" 2>/dev/null && THUMB="shots/$SLUG.png"
+  fi
+
+  E_NAME="$(esc "$NAME")"
+  if [ -n "$THUMB" ]; then
+    PIC="<img src=\"$THUMB\" alt=\"$E_NAME\">"
+  else
+    PIC="<div class=\"noshot\">no picture yet<br><small>game-shot</small></div>"
+  fi
+
+  if [ "$PLAYABLE" = "1" ]; then
+    CARDS="$CARDS
+    <a class=\"card\" href=\"$(esc "$URL")\">
+      <div class=\"pic\">$PIC</div>
+      <div class=\"name\">$E_NAME</div>
+      <div class=\"tag play\">PLAY</div>
+    </a>"
+  else
+    CARDS="$CARDS
+    <div class=\"card off\">
+      <div class=\"pic\">$PIC</div>
+      <div class=\"name\">$E_NAME</div>
+      <div class=\"tag soon\">not shared yet</div>
+    </div>"
+  fi
+
+  printf '   %-28s %s\n' "$NAME" \
+    "$([ "$PLAYABLE" = "1" ] && echo "online" || echo "-> run share-game")"
+done < <(find "$GAMES" -maxdepth 2 -name project.godot 2>/dev/null | sort)
+
+if [ "$COUNT" = "0" ]; then
+  echo "   You have no games yet."
+  echo ""
+  echo "   Make one:  new-game \"My Game\""
+  echo ""
+  exit 0
+fi
+
+cat > "$ARCADE/index.html" <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaian's Arcade</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 64px;
+    background: #12101c;
+    color: #f4f2ff;
+    font: 16px/1.5 system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  }
+  h1 {
+    margin: 0 0 4px; text-align: center;
+    font-size: clamp(32px, 7vw, 56px); letter-spacing: -0.02em;
+  }
+  .sub { text-align: center; color: #9a94b8; margin: 0 0 36px; }
+  .grid {
+    display: grid; gap: 20px; max-width: 1000px; margin: 0 auto;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  }
+  .card {
+    display: block; text-decoration: none; color: inherit;
+    background: #1d1a2e; border: 1px solid #2e2a45; border-radius: 14px;
+    overflow: hidden; transition: transform .12s ease, border-color .12s ease;
+  }
+  a.card:hover { transform: translateY(-3px); border-color: #7c5cff; }
+  .card.off { opacity: .55; }
+  .pic { aspect-ratio: 16/10; background: #14121f; }
+  .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .noshot {
+    width: 100%; height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: #5d5680; font-size: 14px; text-align: center;
+  }
+  .name { padding: 12px 14px 0; font-weight: 600; font-size: 17px; }
+  .tag { padding: 4px 14px 14px; font-size: 13px; }
+  .play { color: #6ee7a8; font-weight: 700; letter-spacing: .06em; }
+  .soon { color: #7d76a0; }
+  footer { text-align: center; color: #6b648c; margin-top: 44px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <h1>Kaian's Arcade</h1>
+  <p class="sub">$LIVE of $COUNT games online - click one to play.</p>
+  <div class="grid">$CARDS
+  </div>
+  <footer>Made with Godot. Art and sounds by Kenney.</footer>
+</body>
+</html>
+HTML
+
+touch "$ARCADE/.nojekyll"
+
+echo ""
+echo "  Page built: $ARCADE/index.html"
+
+if [ "$PUSH" = "0" ]; then
+  command -v open >/dev/null && open "$ARCADE/index.html" 2>/dev/null
+  echo ""
+  echo "  To put it online so you can send one link:"
+  echo "      game-arcade --push"
+  echo ""
+  exit 0
+fi
+
+# ------------------------------------------------------------------ publish
+if ! gh auth status >/dev/null 2>&1; then
+  cat <<'MSG'
+
+  I can't put it online yet - GitHub isn't logged in on this laptop.
+
+  Run this once, then try again:
+      gh auth login
+
+MSG
+  exit 1
+fi
+
+cd "$ARCADE" || exit 1
+[ -d .git ] || git init -q -b main
+
+git add -A
+git diff --cached --quiet || \
+  git -c user.name="Kaian" -c user.email="kaian@local" commit -q -m "Update the arcade"
+
+if ! git remote get-url origin >/dev/null 2>&1; then
+  echo "  Making the arcade repo..."
+  if ! gh repo create "$GH_USER/arcade" --public --source=. --remote=origin --push >/dev/null 2>&1; then
+    echo "  Couldn't make it. Maybe it already exists - trying to connect to it."
+    git remote add origin "https://github.com/$GH_USER/arcade.git" 2>/dev/null || true
+  fi
+  # Pages serves the arcade straight from the top of the repo.
+  gh api -X POST "repos/$GH_USER/arcade/pages" \
+    -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 \
+    || gh api -X PUT "repos/$GH_USER/arcade/pages" \
+    -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 || true
+fi
+
+echo "  Sending it to GitHub..."
+git push -q -u origin main 2>/dev/null || {
+  echo "  Couldn't send it. Check:  gh auth status"; exit 1; }
+
+URL="https://$GH_USER.github.io/arcade/"
+command -v pbcopy >/dev/null && printf '%s' "$URL" | pbcopy
+
+cat <<MSG
+
+  Your arcade is online!
+
+      $URL
+
+  (The link is copied - paste it to anyone.)
+  A brand new arcade can take a minute to show up.
+
+MSG

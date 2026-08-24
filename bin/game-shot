@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# game-shot ["what I just added"]  - save a picture of your game to look back on.
+set -euo pipefail
+[ -f project.godot ] || { echo "Open your game folder first."; exit 1; }
+mkdir -p shots
+STAMP="$(date +%Y-%m-%d_%H%M)"
+FILE="shots/$STAMP.png"
+echo "  Click on your game window..."
+screencapture -w "$FILE" 2>/dev/null || screencapture -i "$FILE"
+[ -s "$FILE" ] || { echo "  No picture taken."; exit 0; }
+NOTE="${1:-}"
+printf -- '- **%s** - %s\n' "$(date '+%b %-d')" "${NOTE:-a new picture}" >> DEVLOG.md
+printf -- '  ![](%s)\n\n' "$FILE" >> DEVLOG.md
+echo "  Saved $FILE and added it to DEVLOG.md"

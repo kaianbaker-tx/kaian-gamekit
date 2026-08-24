@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Find Kenney art and sounds in plain English, then copy them into a game.
+
+  kenney-find spider                  what's there
+  kenney-find jump --kind sound       only sounds
+  kenney-find pizza --grab            copy into this game's assets/
+
+Spelling is forgiving on purpose: "sipder" still finds spiders.
+"""
+import argparse, difflib, json, os, re, shutil, sys
+
+INDEX = os.path.expanduser("~/GameAssets/.index/kenney.json")
+KIND_LABEL = {"image": "picture", "sprite": "picture", "sound": "sound",
+              "model": "3D model", "font": "font", "map": "map"}
+
+def load():
+    if not os.path.exists(INDEX):
+        sys.exit("No asset list yet. Run this first:  kenney-index")
+    with open(INDEX) as f:
+        return json.load(f)
+
+def correct(terms, vocab):
+    """Fix misspellings against the real asset vocabulary."""
+    fixed, notes = [], []
+    vset = set(vocab)
+    for t in terms:
+        if t in vset or len(t) < 4:
+            fixed.append(t)
+            continue
+        near = difflib.get_close_matches(t, vocab, n=1, cutoff=0.78)
+        if near:
+            fixed.append(near[0])
+            notes.append(f"{t} -> {near[0]}")
+        else:
+            fixed.append(t)
+    return fixed, notes
+
+def score(entry, terms):
+    name = (entry.get("s") or os.path.splitext(os.path.basename(entry["p"]))[0]).lower()
+    pack, text = entry["n"].lower(), entry["t"]
+    total = 0
+    for term in terms:
+        hit = 0
+        if re.search(rf"\b{re.escape(term)}\b", name): hit += 12
+        elif term in name:                             hit += 7
+        if re.search(rf"\b{re.escape(term)}\b", pack):  hit += 5
+        if re.search(rf"\b{re.escape(term)}\b", text):  hit += 3
+        elif term in text:                              hit += 1
+        if hit == 0:
+            return 0                       # every word has to land somewhere
+        total += hit
+    total += entry.get("q", 1)             # prefer GLB / plain PNG / OGG
+    if "_packed" in name:                  total -= 3
+    if name in ("preview", "sample", "sampl") or name.startswith("sample"):
+        total -= 8
+    return total
+
+def describe(e):
+    label = KIND_LABEL.get(e["k"], e["k"])
+    if e["k"] == "sprite":
+        return f"  [{label:8}] {e['s']:<22} inside {e['p']}"
+    return f"  [{label:8}] {e['p']}"
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("words", nargs="+")
+    ap.add_argument("--kind", choices=["image", "sprite", "sound", "model", "font", "map"])
+    ap.add_argument("--pack")
+    ap.add_argument("-n", "--number", type=int, default=15)
+    ap.add_argument("--grab", action="store_true", help="copy results into ./assets/")
+    ap.add_argument("--all", action="store_true", help="grab everything that matched")
+    args = ap.parse_args()
+
+    data = load()
+    terms, notes = correct([w.lower() for w in args.words], data.get("vocab", []))
+    if notes:
+        print("Did you mean: " + ", ".join(notes) + "\n")
+
+    pool = data["assets"]
+    if args.kind: pool = [e for e in pool if e["k"] == args.kind]
+    if args.pack: pool = [e for e in pool if args.pack.lower() in e["n"].lower()]
+
+    hits = sorted(((score(e, terms), e) for e in pool), key=lambda x: -x[0])
+    hits = [(s, e) for s, e in hits if s > 0][: (999 if args.all else args.number)]
+
+    if not hits:
+        print(f"Nothing found for: {' '.join(terms)}")
+        near = difflib.get_close_matches(terms[0], data.get("vocab", []), n=6, cutoff=0.6)
+        if near:
+            print("\nBut these exist:  " + "   ".join(near))
+        print("\nTry one word at a time, like:  kenney-find robot")
+        return
+
+    if not args.grab:
+        print(f"Found {len(hits)}. Best matches first:\n")
+        for _, e in hits:
+            print(describe(e))
+        print(f"\nHappy with these?  kenney-find {' '.join(args.words)} --grab")
+        return
+
+    if not os.path.exists("project.godot"):
+        sys.exit("Open your game folder first (the one with project.godot), then try again.")
+
+    root, copied, credits, sprites = data["root"], 0, set(), []
+    for _, e in hits:
+        src = os.path.join(root, e["p"])
+        if not os.path.exists(src):
+            continue
+        dest = os.path.join("assets", "kenney", e["k"] + "s", os.path.basename(e["p"]))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if not os.path.exists(dest):
+            shutil.copy2(src, dest)
+            copied += 1
+            print(f"  added  {dest}")
+        if e["k"] == "sprite":
+            sprites.append((e["s"], dest, e["r"]))
+        credits.add(e["n"])
+
+    # Sprites live inside a big sheet - leave a note saying where each one is.
+    if sprites:
+        with open(os.path.join("assets", "kenney", "sprite-map.txt"), "a") as f:
+            for name, sheet, (x, y, w, h) in sprites:
+                f.write(f"{name}: {sheet} at x={x} y={y} w={w} h={h}\n")
+        print(f"\n  {len(sprites)} sprites are inside a sheet - see assets/kenney/sprite-map.txt")
+
+    header = "# Art and Sounds\n\nMade by Kenney (kenney.nl), free for anyone to use.\n\n"
+    existing = open("CREDITS.md").read() if os.path.exists("CREDITS.md") else header
+    listed = set(re.findall(r"^- (.+)$", existing, re.M))
+    with open("CREDITS.md", "w") as f:
+        f.write(existing)
+        for pack in sorted(credits - listed):
+            f.write(f"- {pack}\n")
+
+    print(f"\nCopied {copied} new files into assets/kenney/")
+    print("Wrote the artist's name into CREDITS.md")
+
+if __name__ == "__main__":
+    main()

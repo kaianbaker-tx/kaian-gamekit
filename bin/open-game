@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# open-game ["Super Snack Cat"]  - open a game in Godot. No name = pick from a list.
+set -uo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/game-lib.sh"
+GAMES="$HOME/Games"
+
+GODOT="$(find_godot)" || { echo "Can't find Godot. Run:  game-doctor"; exit 1; }
+
+if [ $# -ge 1 ]; then
+  DIR="$GAMES/$1"; [ -d "$DIR" ] || DIR="$1"
+else
+  echo ""; echo "  Your games:"; echo ""
+  i=0; LIST=()
+  while IFS= read -r d; do
+    i=$((i+1)); LIST+=("$d"); printf '   %d) %s\n' "$i" "$(basename "$d")"
+  done < <(find "$GAMES" -maxdepth 2 -name project.godot -exec dirname {} \; 2>/dev/null | sort)
+  [ "$i" -gt 0 ] || { echo "   (none yet - try:  new-game \"My Game\")"; exit 0; }
+  echo ""; printf '  Which one? '; read -r n
+  case "$n" in ''|*[!0-9]*) echo "  Type a number."; exit 1 ;; esac
+  DIR="${LIST[$((n-1))]:-}"
+fi
+
+[ -f "${DIR:-}/project.godot" ] || { echo "  Can't find that game."; exit 1; }
+echo "  Opening $(basename "$DIR")..."
+"$GODOT" --editor --path "$DIR" >/dev/null 2>&1 &

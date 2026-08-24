@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# game-idea [word] [--go]  - ideas for what to make next.
+#
+#   game-idea            three ideas
+#   game-idea spider     three ideas about spiders
+#   game-idea --go       three ideas, then make the one you pick
+#
+# Written for the bash that ships with macOS, so: no namerefs, no
+# associative arrays, nothing newer than bash 3.2.
+set -uo pipefail
+
+GO=0
+SEED=""
+for a in "$@"; do
+  case "$a" in
+    --go) GO=1 ;;
+    -*)   ;;
+    *)    SEED="$a" ;;
+  esac
+done
+
+THINGS="spider cat robot shark ninja dragon penguin wizard alien pirate
+        dinosaur goat snowman bee frog knight ghost taco rocket"
+
+# Each line is:  what it does | which template | the word for the title
+IDEAS='never stops jumping|platformer|Jump
+has to get home before dark|platformer|Run
+eats everything it touches|match3|Muncher
+can only move sideways|platformer|Shuffle
+gets bigger every time it wins|match3|Grow
+is being chased by a giant one|platformer|Escape
+has to clean up a huge mess|city|Cleanup
+can turn invisible for two seconds|shooter|Shadow
+races down a mountain|racing|Downhill
+builds a tower as high as it can|city|Tower
+swaps places with its shadow|platformer|Switch
+has to feed a very hungry town|city|Diner
+collects every coin before the timer ends|platformer|Rush
+knocks over everything in the room|racing|Smash'
+
+TWISTS='but everything is upside down
+but you are tiny and the world is huge
+but the floor is disappearing
+but it is dark and you have one torch
+but there are a hundred of them
+but you only get ten seconds
+but it is underwater
+but the whole level is made of food
+but gravity flips when you jump
+but you cannot stop moving'
+
+# pick <item> <item> <item> ... - one at random. Works on bash 3.2.
+pick() { eval "printf '%s' \"\${$((RANDOM % $# + 1))}\""; }
+
+cap() { printf '%s' "$1" | awk '{for(i=1;i<=NF;i++){$i=toupper(substr($i,1,1)) substr($i,2)}; print}'; }
+
+echo ""
+echo "  Three things you could make:"
+echo ""
+
+N1=""; N2=""; N3=""
+T1=""; T2=""; T3=""
+S1=""
+USED=""
+
+i=0
+while [ "$i" -lt 3 ]; do
+  # Don't offer the same idea twice in one go.
+  OLDIFS="$IFS"; IFS=$'\n'
+  LINE="$(pick $IDEAS)"
+  TWIST="$(pick $TWISTS)"
+  IFS="$OLDIFS"
+  case "$USED" in *"$LINE"*) continue ;; esac
+  USED="$USED
+$LINE"
+
+  DOING="${LINE%%|*}"
+  REST="${LINE#*|}"
+  TEMPL="${REST%%|*}"
+  WORD="${REST##*|}"
+
+  if [ -n "$SEED" ]; then THING="$SEED"; else THING="$(pick $THINGS)"; fi
+  NAME="$(cap "$THING") $WORD"
+
+  i=$((i+1))
+  eval "N$i=\$NAME; T$i=\$TEMPL"
+  [ "$i" = "1" ] && S1="$THING"
+
+  printf '   %d) A %s that %s,\n      %s\n' "$i" "$THING" "$DOING" "$TWIST"
+  printf '      call it "%s"  -  start from the %s template\n\n' "$NAME" "$TEMPL"
+done
+
+echo "  Look for the art first:"
+echo "      kenney-find $S1"
+echo ""
+
+if [ "$GO" = "0" ]; then
+  echo "  Like one? Make it:"
+  printf '      new-game "%s" %s\n' "$N1" "$T1"
+  echo ""
+  echo "  Or see three more:  game-idea"
+  echo ""
+  exit 0
+fi
+
+printf '  Which one do you want to make? (1, 2, 3, or press return to skip)  '
+read -r n
+case "$n" in
+  1|2|3) ;;
+  *) echo ""; echo "  No problem - run  game-idea  again whenever you want."; echo ""; exit 0 ;;
+esac
+
+eval "NAME=\$N$n; TEMPL=\$T$n"
+echo ""
+echo "  Making \"$NAME\"..."
+exec new-game "$NAME" "$TEMPL"

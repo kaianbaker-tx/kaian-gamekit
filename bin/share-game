@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# share-game - build the web version, put it online, hand over the link.
+set -uo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/game-lib.sh"
+
+[ -f project.godot ] || { echo "Open your game folder first, then try again."; exit 1; }
+
+GODOT="$(find_godot)" || {
+  cat <<'MSG'
+
+  I can't find Godot on this laptop.
+
+  If you know where it is, tell me once and I'll remember:
+      echo 'export GODOT_BIN="/path/to/godot"' >> ~/.zshrc
+
+  Or run  game-doctor  to see what I looked for.
+
+MSG
+  exit 1; }
+
+DIR="$(pwd)"
+NAME="$(sed -n 's/^config\/name="\(.*\)"/\1/p' project.godot | head -1)"
+[ -n "$NAME" ] || NAME="$(basename "$DIR")"
+SLUG="$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')"
+
+if ! web_templates_ok; then
+  cat <<MSG
+
+  Godot is here ($GODOT) but it can't make web versions yet -
+  the "export templates" are missing.
+
+  Open Godot, then:  Editor  ->  Manage Export Templates  ->  Download and Install
+  It takes a few minutes once, then share-game works forever.
+
+MSG
+  exit 1
+fi
+
+grep -q 'platform="Web"' export_presets.cfg 2>/dev/null || {
+  echo ""; echo "  This game has no web version set up yet. Run:  fix-games --go"; echo ""; exit 1; }
+
+echo ""
+echo "  Building the web version of $NAME..."
+mkdir -p docs
+touch docs/.nojekyll        # stops GitHub hiding files that start with _
+
+LOG="$(mktemp)"
+"$GODOT" --headless --path "$DIR" --export-release "Web" "$DIR/docs/index.html" >"$LOG" 2>&1
+if [ ! -s docs/index.html ]; then
+  echo "  The web build didn't work. Godot said:"
+  echo ""
+  tail -12 "$LOG" | sed 's/^/      /'
+  echo ""
+  rm -f "$LOG"; exit 1
+fi
+rm -f "$LOG"
+
+echo "  Saving your changes..."
+git add -A
+git diff --cached --quiet || \
+  git -c user.name="Kaian" -c user.email="kaian@local" commit -q -m "Update $NAME"
+
+if ! git remote get-url origin >/dev/null 2>&1; then
+  echo ""; echo "  This game isn't on GitHub yet, so there's no link."
+  echo "  Ask Dad to run:  gh auth login    then:  fix-games --go"; echo ""; exit 0
+fi
+
+echo "  Sending it to GitHub..."
+BR="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; [ -n "$BR" ] || BR=main
+git push -q -u origin "$BR" 2>/dev/null || {
+  echo "  Couldn't send it. Ask Dad to check:  gh auth login"; exit 1; }
+
+OWNER="$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')"
+URL="https://$OWNER.github.io/$SLUG/"
+command -v pbcopy >/dev/null && printf '%s' "$URL" | pbcopy
+
+cat <<MSG
+
+  Your game is online!
+
+      $URL
+
+  (The link is copied - just paste it to Dad.)
+  If it looks old, wait a minute and refresh.
+
+MSG

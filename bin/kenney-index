@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Build a searchable index of the Kenney asset library.
+
+Two things make this worth doing rather than just using Finder:
+
+1. Kenney's 2D files are mostly named `tile_0022.png` / `ship_0001.png`.
+   The real names ("elephant", "penguin") live inside the Spritesheet XML
+   atlases, so we parse those and index every sprite by its true name.
+2. 3D kits ship the same model as GLB, FBX, OBJ, DAE and STL. Godot wants
+   GLB, so we rank that first and never make him guess.
+"""
+import json, os, re, sys, time
+import xml.etree.ElementTree as ET
+
+ROOT = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1 else "~/GameAssets/Kenney")
+OUT  = os.path.expanduser("~/GameAssets/.index/kenney.json")
+
+KIND_BY_EXT = {
+    ".png": "image", ".jpg": "image", ".svg": "image",
+    ".ogg": "sound", ".wav": "sound", ".mp3": "sound",
+    ".glb": "model", ".gltf": "model", ".obj": "model",
+    ".fbx": "model", ".dae": "model", ".blend": "model",
+    ".ttf": "font",  ".otf": "font",
+    ".tmx": "map",   ".tsx": "map",
+}
+
+# Godot imports GLB natively; the other formats are extra work for no gain.
+FORMAT_RANK = {".glb": 3, ".gltf": 2, ".png": 3, ".svg": 2, ".ogg": 3}
+
+SYNONYMS = {
+    "shmup":   "shooter spaceship space ship laser",
+    "foley":   "footstep door cloth everyday",
+    "impact":  "hit punch crash smash bang hurt",
+    "jumper":  "platformer jump hop",
+    "rpg":     "fantasy sword magic adventure",
+    "ui":      "button menu panel interface click",
+    "sci-fi":  "space robot alien future laser",
+    "voxel":   "blocky cube",
+    "physics": "crate box ball",
+    "emote":   "emoji face expression",
+    "particle":"explosion smoke fire spark",
+    "pets":    "animal cat dog pet",
+    "food":    "eat snack meal",
+}
+
+def tokens(text):
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    return [t for t in re.split(r"[^A-Za-z0-9]+", text.lower()) if t and not t.isdigit()]
+
+def atlas_sprites(xml_path):
+    """Yield (sprite_name, x, y, w, h) from a Kenney TextureAtlas file."""
+    try:
+        root = ET.parse(xml_path).getroot()
+    except Exception:
+        return
+    for sub in root.iter("SubTexture"):
+        name = sub.get("name")
+        if not name:
+            continue
+        yield (os.path.splitext(name)[0],
+               sub.get("x"), sub.get("y"), sub.get("width"), sub.get("height"),
+               root.get("imagePath") or "")
+
+def main():
+    if not os.path.isdir(ROOT):
+        sys.exit(f"Kenney library not found at {ROOT}\n"
+                 f"Unzip 'Kenney Game Assets All-in-1' there first.")
+    start, entries, vocab, skipped, atlases = time.time(), [], set(), 0, 0
+
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        rel_dir  = os.path.relpath(dirpath, ROOT)
+        parts    = [] if rel_dir == "." else rel_dir.split(os.sep)
+        category = parts[0] if parts else ""
+        pack     = parts[1] if len(parts) > 1 else ""
+        subpath  = os.sep.join(parts[2:])
+        pack_words = set(tokens(pack)) | set(tokens(subpath))
+        for key, extra in SYNONYMS.items():
+            if key in pack.lower():
+                pack_words |= set(extra.split())
+
+        for fn in filenames:
+            stem, ext = os.path.splitext(fn)
+            ext = ext.lower()
+            rel = os.path.join(rel_dir, fn) if rel_dir != "." else fn
+
+            # Spritesheet atlas: index every sprite inside it by its real name.
+            if ext == ".xml":
+                found = list(atlas_sprites(os.path.join(dirpath, fn)))
+                if found:
+                    atlases += 1
+                    sheet = os.path.join(rel_dir, found[0][5]) if found[0][5] else ""
+                    for name, x, y, w, h, _ in found:
+                        words = set(tokens(name)) | pack_words
+                        vocab |= set(tokens(name))
+                        entries.append({
+                            "p": sheet, "k": "sprite", "c": category, "n": pack,
+                            "s": name, "r": [x, y, w, h],
+                            "t": " ".join(sorted(words)), "q": 3,
+                        })
+                continue
+
+            kind = KIND_BY_EXT.get(ext)
+            if kind is None:
+                skipped += 1
+                continue
+
+            words = set(tokens(stem)) | pack_words
+            vocab |= set(tokens(stem))
+            entries.append({
+                "p": rel, "k": kind, "c": category, "n": pack,
+                "t": " ".join(sorted(words)),
+                "q": FORMAT_RANK.get(ext, 1),   # format preference
+            })
+
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    packs = sorted({e["n"] for e in entries if e["n"]})
+    with open(OUT, "w") as f:
+        json.dump({"root": ROOT, "built": time.strftime("%Y-%m-%d %H:%M"),
+                   "packs": packs, "vocab": sorted(vocab), "assets": entries},
+                  f, separators=(",", ":"))
+
+    by_kind = {}
+    for e in entries:
+        by_kind[e["k"]] = by_kind.get(e["k"], 0) + 1
+    print(f"Indexed {len(entries):,} assets from {len(packs)} packs "
+          f"in {time.time()-start:.1f}s  ({os.path.getsize(OUT)/1e6:.1f} MB)")
+    for k, v in sorted(by_kind.items(), key=lambda x: -x[1]):
+        print(f"  {k:7} {v:,}")
+    print(f"  ({atlases} spritesheets unpacked, {skipped:,} non-asset files skipped)")
+    print(f"\nWrote {OUT}")
+
+if __name__ == "__main__":
+    main()

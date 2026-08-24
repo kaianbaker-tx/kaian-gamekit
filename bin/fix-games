@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# fix-games [--go] [--debug]
+#
+#   (no flag)  show what would change, change nothing
+#   --go       actually do it
+#   --debug    print every command, for when something goes wrong
+#
+# Safe to run again after a failed run: it finishes whatever is unfinished.
+# Never deletes. Only moves folders and adds missing files.
+set -uo pipefail          # deliberately NOT -e: one bad game must not kill the rest
+
+GAMES="$HOME/Games"
+GH_USER="${GAME_GH_USER:-kaianbaker-tx}"
+GO=0; DEBUG=0
+for a in "$@"; do
+  case "$a" in
+    --go) GO=1 ;;
+    --debug) DEBUG=1 ;;
+    *) echo "Don't know the option '$a'"; exit 2 ;;
+  esac
+done
+[ "$DEBUG" = 1 ] && set -x
+
+# Never run git against the current directory - always name the folder.
+# This is what broke before: if the shell was sitting in a folder that got
+# moved, every later git command failed with "not a git repository".
+G() { git -C "$1" "${@:2}"; }
+
+slug()  { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//'; }
+title() { printf '%s' "$1" | sed 's/[-_]/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1'; }
+
+# True only if DIR is the ROOT of its own repo. A folder sitting inside some
+# other repo (like a git-init'd home folder) must not count.
+owns_repo() {
+  local top; top="$(G "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ "$top" = "$1" ]
+}
+
+has_commits() { G "$1" rev-parse HEAD >/dev/null 2>&1; }
+
+web_preset_index() {   # next free [preset.N] number
+  local f="$1/export_presets.cfg" n=0
+  [ -f "$f" ] && n="$(grep -c '^\[preset\.[0-9]\{1,\}\]' "$f" 2>/dev/null)"
+  [ -n "$n" ] || n=0
+  printf '%s' "$n"
+}
+
+add_web_preset() {
+  local dir="$1" n; n="$(web_preset_index "$dir")"
+  cat >> "$dir/export_presets.cfg" <<PRESET
+
+[preset.$n]
+
+name="Web"
+platform="Web"
+runnable=true
+export_filter="all_resources"
+include_filter=""
+exclude_filter="shots/*"
+export_path="docs/index.html"
+encrypt_pck=false
+encrypt_directory=false
+script_export_mode=2
+
+[preset.$n.options]
+
+variant/extensions_support=false
+variant/thread_support=false
+vram_texture_compression/for_desktop=true
+vram_texture_compression/for_mobile=true
+html/export_icon=true
+html/canvas_resize_policy=2
+html/focus_canvas_on_start=true
+progressive_web_app/enabled=false
+PRESET
+}
+
+echo ""
+if [ "$GO" = 1 ]; then echo "  Fixing games for real."
+else echo "  PLAN ONLY - nothing will change. Add --go to do it."; fi
+echo ""
+mkdir -p "$GAMES"
+
+# Look everywhere, including games a previous run already moved into ~/Games,
+# so an interrupted run can be finished by just running this again.
+FOUND=0
+while IFS= read -r proj; do
+  DIR="$(cd "$(dirname "$proj")" && pwd)"          # absolute, no symlink surprises
+  FOUND=$((FOUND+1))
+
+  RAW="$(sed -n 's/^config\/name="\(.*\)"/\1/p' "$proj" | head -1)"
+  [ -n "$RAW" ] || RAW="$(basename "$DIR")"
+  NAME="$(title "$RAW")"
+  SLUG="$(slug "$NAME")"
+
+  case "$DIR" in
+    "$GAMES"/*) DEST="$DIR"; MOVING=0 ;;           # already in place
+    *)          DEST="$GAMES/$NAME"; MOVING=1 ;;
+  esac
+
+  echo "  $RAW"
+  [ "$MOVING" = 1 ] && echo "     move:  $DIR"
+  echo "     here:  $DEST"
+
+  OWNS=0;   owns_repo "$DIR"                          && OWNS=1
+  REMOTE=0; G "$DIR" remote get-url origin >/dev/null 2>&1 && REMOTE=1
+  WEB=0;    grep -q 'platform="Web"' "$DIR/export_presets.cfg" 2>/dev/null && WEB=1
+  CLAUDE=0; [ -f "$DIR/CLAUDE.md" ] && CLAUDE=1
+
+  [ "$OWNS"   = 0 ] && echo "     todo:  start saving versions (git)"
+  [ "$REMOTE" = 0 ] && echo "     todo:  put on GitHub as $GH_USER/$SLUG"
+  [ "$WEB"    = 0 ] && echo "     todo:  add the web version"
+  [ "$CLAUDE" = 0 ] && echo "     todo:  add CLAUDE.md notes"
+  if [ "$OWNS,$REMOTE,$WEB,$CLAUDE,$MOVING" = "1,1,1,1,0" ]; then
+    echo "     nothing to do"
+  fi
+
+  if [ "$GO" = 1 ]; then
+    if [ "$MOVING" = 1 ]; then
+      if [ -e "$DEST" ]; then
+        echo "     SKIPPED - '$NAME' is already in Games"; echo ""; continue
+      fi
+      if ! mv "$DIR" "$DEST"; then
+        echo "     FAILED to move - left it alone"; echo ""; continue
+      fi
+    fi
+
+    # Re-check after the move; never trust the earlier answer.
+    owns_repo "$DEST" || G "$DEST" init -q -b main
+
+    [ -f "$DEST/.gitignore" ] || printf '.godot/\nandroid/\n.DS_Store\n' > "$DEST/.gitignore"
+    [ "$WEB" = 0 ] && add_web_preset "$DEST"
+
+    if [ ! -f "$DEST/CLAUDE.md" ]; then
+      cat > "$DEST/CLAUDE.md" <<MD
+# $NAME
+
+Kaian is 10 and talks with voice-to-text, so his spelling will be off.
+Work out what he meant. Short sentences, one idea at a time.
+
+- Godot 4.7. The web build goes to \`docs/\` and is published on GitHub Pages.
+- Find art with \`kenney-find <word>\`, copy it in with \`--grab\`.
+- Publish with \`share-game\`.
+- Keep \`thread_support=false\` in export_presets.cfg or the web page is black.
+MD
+    fi
+
+    # Commit, with a fallback identity so a fresh machine can't block this.
+    G "$DEST" add -A
+    if ! G "$DEST" diff --cached --quiet; then
+      G "$DEST" -c user.name="Kaian" -c user.email="kaian@local" \
+        commit -q -m "Tidy up $NAME" || echo "     (could not save a version)"
+    fi
+
+    if [ "$REMOTE" = 0 ] && gh auth status >/dev/null 2>&1; then
+      if gh repo create "$GH_USER/$SLUG" --public --source="$DEST" --remote=origin --push >/dev/null 2>&1; then
+        echo "     github: https://github.com/$GH_USER/$SLUG"
+        gh api -X POST "repos/$GH_USER/$SLUG/pages" \
+          -f "source[branch]=main" -f "source[path]=/docs" >/dev/null 2>&1 || true
+      else
+        echo "     (GitHub repo not created - is 'gh auth login' done?)"
+      fi
+    fi
+
+    ln -sfn "$DEST" "$HOME/Desktop/$NAME" 2>/dev/null
+    echo "     done"
+  fi
+  echo ""
+done < <(find "$HOME" -name project.godot \
+           -not -path "*/Library/*" -not -path "*/GameAssets/*" \
+           -not -path "*/.godot/*" 2>/dev/null)
+
+[ "$FOUND" = 0 ] && echo "  No Godot games found under $HOME."
+if [ "$GO" = 0 ] && [ "$FOUND" -gt 0 ]; then
+  echo "  Looks right?  Run:  fix-games --go"
+  echo ""
+fi

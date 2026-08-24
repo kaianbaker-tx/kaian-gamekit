@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Find every game Kaian ever started - on disk AND in his Claude history.
+
+He starts a new Claude chat per idea but reuses the same folder, so the
+sidebar shows a dozen games while the disk shows three. This digs up both
+and says which ideas actually produced files.
+
+  game-archaeology            report
+  game-archaeology --json     machine readable
+"""
+import json, os, re, sys, collections
+
+HOME     = os.path.expanduser("~")
+PROJECTS = os.path.join(HOME, ".claude", "projects")
+GAME_EXT = (".tscn", ".gd", ".godot", ".tres", ".import")
+
+def sessions():
+    """Every Claude session: title, folder, when, and what it wrote."""
+    out = []
+    if not os.path.isdir(PROJECTS):
+        return out
+    for proj in sorted(os.listdir(PROJECTS)):
+        pdir = os.path.join(PROJECTS, proj)
+        if not os.path.isdir(pdir):
+            continue
+        for fn in sorted(os.listdir(pdir)):
+            if not fn.endswith(".jsonl"):
+                continue
+            path = os.path.join(pdir, fn)
+            rec = {"project": proj, "file": fn[:-6], "title": None,
+                   "cwd": None, "first": None, "start": None, "end": None,
+                   "writes": set(), "turns": 0}
+            try:
+                with open(path, errors="replace") as f:
+                    for line in f:
+                        try:
+                            o = json.loads(line)
+                        except Exception:
+                            continue
+                        t = o.get("type")
+                        if t in ("ai-title", "custom-title"):
+                            rec["title"] = o.get("aiTitle") or o.get("customTitle") or rec["title"]
+                        if o.get("cwd") and not rec["cwd"]:
+                            rec["cwd"] = o["cwd"]
+                        ts = o.get("timestamp")
+                        if ts:
+                            rec["start"] = rec["start"] or ts
+                            rec["end"] = ts
+                        if t == "user":
+                            rec["turns"] += 1
+                            msg = o.get("message") or {}
+                            c = msg.get("content")
+                            if isinstance(c, str) and not rec["first"] and not c.startswith("<"):
+                                rec["first"] = c.strip()[:120]
+                        if t == "assistant":
+                            for blk in (o.get("message") or {}).get("content") or []:
+                                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                                    continue
+                                inp = blk.get("input") or {}
+                                fp = inp.get("file_path") or inp.get("notebook_path")
+                                if isinstance(fp, str):
+                                    rec["writes"].add(fp)
+                                cmd = inp.get("command")
+                                if isinstance(cmd, str):
+                                    for m in re.findall(r"(?:~|/)[\w\-.]+(?:/[\w\-. ]+)+\.(?:tscn|gd)", cmd):
+                                        m = m.strip()
+                                        if "//" not in m and len(m) > 8:
+                                            rec["writes"].add(m)
+            except Exception:
+                continue
+            out.append(rec)
+    return out
+
+def on_disk():
+    """Godot projects, plus folders with game files but no project.godot."""
+    full, partial = [], []
+    NOISE = {".git", ".godot", "node_modules", "Library", "GameAssets",
+             "miniconda3", "anaconda3", ".pyenv", ".nvm", ".npm", ".cache",
+             "site-packages", "venv", ".venv", "Applications", ".Trash"}
+    skip = tuple(os.sep + n + os.sep for n in NOISE)
+    for dirpath, dirnames, filenames in os.walk(HOME):
+        if any(s in dirpath + os.sep for s in skip):
+            dirnames[:] = []
+            continue
+        dirnames[:] = [d for d in dirnames if d not in NOISE and not d.startswith(".")]
+        if "project.godot" in filenames:
+            name = ""
+            try:
+                with open(os.path.join(dirpath, "project.godot"), errors="replace") as f:
+                    m = re.search(r'^config/name="(.*)"', f.read(), re.M)
+                    name = m.group(1) if m else ""
+            except Exception:
+                pass
+            n = sum(len(fs) for _, _, fs in os.walk(dirpath))
+            full.append({"dir": dirpath, "name": name or os.path.basename(dirpath), "files": n})
+            dirnames[:] = []          # don't descend into a project
+        elif any(f.endswith(GAME_EXT) for f in filenames):
+            partial.append({"dir": dirpath,
+                            "hits": [f for f in filenames if f.endswith(GAME_EXT)][:5]})
+    return full, partial
+
+def main():
+    ses = sessions()
+    full, partial = on_disk()
+
+    if "--json" in sys.argv:
+        print(json.dumps({"sessions": [{**s, "writes": sorted(s["writes"])} for s in ses],
+                          "projects": full, "partial": partial}, indent=2))
+        return
+
+    print()
+    print("  GODOT PROJECTS ON DISK")
+    print("  ======================")
+    for p in sorted(full, key=lambda x: x["dir"]):
+        print(f"  {p['name']}")
+        print(f"     {p['dir']}   ({p['files']} files)")
+    if not full:
+        print("  (none)")
+
+    if partial:
+        print()
+        print("  GAME FILES WITH NO GODOT PROJECT  (started, never finished)")
+        print("  ==========================================================")
+        for p in partial:
+            print(f"  {p['dir']}")
+            print(f"     has: {', '.join(p['hits'])}")
+
+    # Group Claude sessions by the folder they ran in.
+    print()
+    print("  IDEAS FROM HIS CLAUDE HISTORY")
+    print("  =============================")
+    by_cwd = collections.defaultdict(list)
+    for s in ses:
+        by_cwd[s["cwd"] or "(unknown)"].append(s)
+
+    live_dirs = {p["dir"] for p in full}
+    for cwd, group in sorted(by_cwd.items()):
+        exists = os.path.isdir(cwd) if cwd != "(unknown)" else False
+        is_game = cwd in live_dirs
+        tag = "GAME" if is_game else ("folder exists" if exists else "FOLDER GONE")
+        print()
+        print(f"  {cwd}   [{tag}]")
+        for s in sorted(group, key=lambda x: x["end"] or ""):
+            code = [w for w in s["writes"] if w.endswith((".gd", ".tscn"))]
+            made = f"{len(code)} game files" if code else "no game files"
+            when = (s["end"] or "")[:10]
+            title = s["title"] or (s["first"] or "(untitled)")[:60]
+            print(f"     - {title}")
+            print(f"         {when}   {s['turns']} messages   {made}")
+            if code:
+                roots = sorted({os.path.dirname(c) for c in code})[:3]
+                for r in roots:
+                    gone = "" if os.path.isdir(os.path.expanduser(r)) else "   <- GONE"
+                    print(f"         wrote into {r}{gone}")
+
+    print()
+    print(f"  {len(full)} real projects, {len(partial)} half-built, {len(ses)} chat sessions")
+    print()
+
+if __name__ == "__main__":
+    main()

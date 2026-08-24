@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# game-doctor - check that everything the kit needs is working.
+set -uo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/game-lib.sh"
+
+ok()   { printf '  [ok]   %s\n' "$*"; }
+bad()  { printf '  [FIX]  %s\n' "$*"; }
+
+echo ""
+echo "  Checking the game kit"
+echo "  ====================="
+
+if G="$(find_godot)"; then ok "Godot: $G  ($(godot_version "$G"))"
+else
+  bad "Godot not found. I looked in:"
+  printf '         ~/bin/godot, PATH, /Applications/Godot*.app, ~/Applications/Godot*.app\n'
+  printf '         Fix: echo '"'"'export GODOT_BIN="/your/path/to/godot"'"'"' >> ~/.zshrc\n'
+fi
+
+if web_templates_ok; then ok "Godot web export templates"
+else bad "Web export templates missing -> Godot: Editor > Manage Export Templates > Download and Install"; fi
+
+if gh auth status >/dev/null 2>&1; then
+  ok "GitHub: $(gh api user -q .login 2>/dev/null || echo 'logged in')"
+else bad "GitHub not logged in -> run: gh auth login"; fi
+
+[ -d "$HOME/GameAssets/Kenney/2D assets" ] && ok "Kenney art library" \
+  || bad "Kenney art library missing -> put the zip in ~/Downloads and re-run install.sh"
+
+if [ -f "$HOME/GameAssets/.index/kenney.json" ]; then
+  N=$(python3 -c "import json;print(len(json.load(open('$HOME/GameAssets/.index/kenney.json'))['assets']))" 2>/dev/null || echo '?')
+  ok "Asset search index ($N assets)"
+else bad "No asset index -> run: kenney-index"; fi
+
+T=$(ls -1 "$HOME/GameAssets/templates" 2>/dev/null | wc -l | tr -d ' ')
+[ "$T" -gt 0 ] && ok "$T starter templates" || bad "No templates -> re-run install.sh"
+
+case ":$PATH:" in *":$HOME/bin:"*) ok "~/bin is on PATH" ;;
+  *) bad "~/bin not on PATH -> open a new Terminal tab" ;; esac
+
+C=$(find "$HOME/Games" -maxdepth 2 -name project.godot 2>/dev/null | wc -l | tr -d ' ')
+echo ""
+echo "  Games in ~/Games: $C"
+find "$HOME" -name project.godot -not -path "*/Library/*" -not -path "$HOME/Games/*" \
+     -not -path "*/GameAssets/*" 2>/dev/null | while read -r p; do
+  echo "  [FIX]  not tidied yet: $(dirname "$p")  -> run: fix-games"
+done
+echo ""

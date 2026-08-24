@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# new-game "Super Snack Cat" [template]
+# Makes a Godot game, a GitHub repo, and a web page - in one step.
+set -euo pipefail
+
+GAMES="$HOME/Games"
+TEMPLATES="$HOME/GameAssets/templates"
+GH_USER="${GAME_GH_USER:-kaianbaker-tx}"
+
+say()  { printf '%s\n' "$*"; }
+step() { printf '\n  %s\n' "$*"; }
+die()  { printf '\nStopped: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- name
+if [ $# -ge 1 ]; then
+  NAME="$1"
+else
+  printf 'What is your game called?  '
+  IFS= read -r NAME
+fi
+[ -n "${NAME:-}" ] || die "A game needs a name."
+
+# "Super Snack Cat" -> "super-snack-cat" for the web address
+SLUG="$(printf '%s' "$NAME" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')"
+[ -n "$SLUG" ] || die "That name has no letters or numbers in it."
+
+TEMPLATE="${2:-blank}"
+DIR="$GAMES/$NAME"
+
+say ""
+say "  Game name:    $NAME"
+say "  Folder:       $DIR"
+say "  Web address:  https://$GH_USER.github.io/$SLUG/"
+say "  Starting from: $TEMPLATE"
+say ""
+
+[ -e "$DIR" ] && die "You already have a game called '$NAME'."
+
+# ---------------------------------------------------------------- files
+step "Making the folder..."
+mkdir -p "$GAMES"
+
+if [ "$TEMPLATE" != "blank" ]; then
+  SRC="$TEMPLATES/$TEMPLATE"
+  [ -d "$SRC" ] || die "No template called '$TEMPLATE'. Try: ls $TEMPLATES"
+  # Copy the template but never its git history - this is HIS game now.
+  cp -R "$SRC" "$DIR"
+  rm -rf "$DIR/.git" "$DIR/.github" "$DIR/.godot"
+else
+  mkdir -p "$DIR"
+  cat > "$DIR/project.godot" <<GODOT
+; Godot project - made with new-game
+config_version=5
+
+[application]
+config/name="$NAME"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[display]
+window/size/viewport_width=1152
+window/size/viewport_height=648
+window/stretch/mode="canvas_items"
+
+[rendering]
+textures/canvas_textures/default_texture_filter=0
+GODOT
+
+  cat > "$DIR/main.tscn" <<'SCENE'
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Title" type="Label" parent="."]
+offset_left = 60.0
+offset_top = 60.0
+offset_right = 900.0
+offset_bottom = 140.0
+text = "Your game starts here!"
+SCENE
+
+  cat > "$DIR/main.gd" <<'GD'
+extends Node2D
+
+# This runs one time when the game starts.
+func _ready() -> void:
+	print("Hello! The game is running.")
+
+
+# This runs about 60 times every second.
+func _process(_delta: float) -> void:
+	pass
+GD
+fi
+
+# Point the project name at the real title even for templates.
+if [ -f "$DIR/project.godot" ]; then
+  /usr/bin/sed -i '' "s|^config/name=.*|config/name=\"$NAME\"|" "$DIR/project.godot" 2>/dev/null || true
+fi
+
+mkdir -p "$DIR/assets/kenney" "$DIR/shots"
+
+# ---------------------------------------------------------------- web export
+step "Setting up the web version..."
+# thread_support MUST stay false: GitHub Pages cannot send the special
+# headers that Godot's threaded web build needs, and the game would
+# just show a black screen.
+cat > "$DIR/export_presets.cfg" <<'PRESET'
+[preset.0]
+
+name="Web"
+platform="Web"
+runnable=true
+advanced_options=false
+dedicated_server=false
+custom_features=""
+export_filter="all_resources"
+include_filter=""
+exclude_filter="shots/*"
+export_path="docs/index.html"
+patches=PackedStringArray()
+encryption_include_filters=""
+encryption_exclude_filters=""
+seed=0
+encrypt_pck=false
+encrypt_directory=false
+script_export_mode=2
+
+[preset.0.options]
+
+custom_template/debug=""
+custom_template/release=""
+variant/extensions_support=false
+variant/thread_support=false
+vram_texture_compression/for_desktop=true
+vram_texture_compression/for_mobile=true
+html/export_icon=true
+html/custom_html_shell=""
+html/head_include=""
+html/canvas_resize_policy=2
+html/focus_canvas_on_start=true
+html/experimental_virtual_keyboard=false
+progressive_web_app/enabled=false
+progressive_web_app/ensure_cross_origin_isolation_headers=true
+PRESET
+
+cat > "$DIR/.gitignore" <<'IGN'
+# Godot's own scratch files - not part of the game
+.godot/
+android/
+
+# Mac clutter
+.DS_Store
+
+# Big raw files we don't need on GitHub
+*.blend1
+IGN
+
+# ---------------------------------------------------------------- docs
+cat > "$DIR/README.md" <<MD
+# $NAME
+
+Play it here: **https://$GH_USER.github.io/$SLUG/**
+
+Made by Kaian with Godot.
+
+## Working on it
+
+\`\`\`
+open-game "$NAME"      # open it in Godot
+kenney-find spider     # look for art and sounds
+share-game             # put the new version online
+\`\`\`
+MD
+
+cat > "$DIR/CLAUDE.md" <<MD
+# $NAME
+
+Kaian is 10. He reads everything you write, and he talks to you with
+voice-to-text, so his spelling will be off - work out what he meant and
+keep going instead of asking him to spell it again.
+
+## How to talk to him
+
+- Short sentences. One idea at a time.
+- Say what you are about to do, then do it, then say what changed.
+- When something breaks, say what broke in plain words and fix it.
+- Never dump a wall of code at him. Explain the one line that matters.
+
+## This game
+
+- Godot 4.7, single web export, published to GitHub Pages.
+- Art and sounds come from the Kenney library. Use \`kenney-find <word>\`
+  to search it and \`kenney-find <word> --grab\` to copy files into
+  \`assets/kenney/\`. Never hand-copy from ~/GameAssets.
+- \`share-game\` exports the web build into \`docs/\` and pushes. That is the
+  only way the site updates.
+- Keep \`variant/thread_support=false\` in export_presets.cfg or the web
+  build shows a black screen on GitHub Pages.
+
+## Rules
+
+- Commit small and often, with messages he could read back later.
+- Never commit anything from \`shots/\` bigger than a screenshot.
+- If he asks for something that would take hours, build the smallest
+  version that works first and show him that.
+MD
+
+printf '# Art and Sounds\n\nMade by Kenney (kenney.nl), free for anyone to use.\n\n' > "$DIR/CREDITS.md"
+
+# ---------------------------------------------------------------- git
+step "Saving the first version..."
+cd "$DIR"
+git init -q -b main
+git add -A
+git commit -q -m "Start $NAME"
+
+# ---------------------------------------------------------------- github
+if gh auth status >/dev/null 2>&1; then
+  step "Putting it on GitHub..."
+  if gh repo create "$GH_USER/$SLUG" --public --source=. --remote=origin --push >/dev/null 2>&1; then
+    say "  Repo:  https://github.com/$GH_USER/$SLUG"
+    # Pages serves from /docs on main - share-game fills that folder.
+    gh api -X POST "repos/$GH_USER/$SLUG/pages" \
+      -f "source[branch]=main" -f "source[path]=/docs" >/dev/null 2>&1 \
+      || gh api -X PUT "repos/$GH_USER/$SLUG/pages" \
+      -f "source[branch]=main" -f "source[path]=/docs" >/dev/null 2>&1 || true
+    say "  Web page will work after your first  share-game"
+  else
+    say "  (Could not make the GitHub repo - maybe it already exists.)"
+  fi
+else
+  say ""
+  say "  GitHub is not logged in yet, so this game is only on this laptop."
+  say "  Ask Dad to run:  gh auth login"
+fi
+
+# ---------------------------------------------------------------- shortcuts
+ln -sfn "$DIR" "$HOME/Desktop/$NAME" 2>/dev/null || true
+
+say ""
+say "  Done. Your game is ready."
+say ""
+say "  Open it:   open-game \"$NAME\""
+say "  Find art:  kenney-find cat"
+say "  Share it:  share-game"
+say ""
