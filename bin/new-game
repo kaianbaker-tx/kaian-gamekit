@@ -107,6 +107,9 @@ mkdir -p "$DIR/assets/kenney" "$DIR/shots"
 
 # ---------------------------------------------------------------- web export
 step "Setting up the web version..."
+# for_mobile MUST stay false: it asks Godot for ETC2/ASTC textures, which
+# the project must opt into first, and the export just refuses with a bare
+# "configuration errors" if it hasn't. Web builds don't need it anyway.
 # thread_support MUST stay false: GitHub Pages cannot send the special
 # headers that Godot's threaded web build needs, and the game would
 # just show a black screen.
@@ -138,7 +141,7 @@ custom_template/release=""
 variant/extensions_support=false
 variant/thread_support=false
 vram_texture_compression/for_desktop=true
-vram_texture_compression/for_mobile=true
+vram_texture_compression/for_mobile=false
 html/export_icon=true
 html/custom_html_shell=""
 html/head_include=""
