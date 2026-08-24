@@ -1,0 +1,63 @@
+{
+  "_comment": "Kaian's Claude settings. Installed to ~/.claude-kaian/settings.json by install.sh, and only if that file does not already exist - your edits are never overwritten. This is a guardrail against accidents, not a security boundary: see README.",
+
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+
+    "allow": [
+      "Bash(new-game:*)",
+      "Bash(game-idea:*)",
+      "Bash(game-save:*)",
+      "Bash(game-undo:*)",
+      "Bash(game-shot:*)",
+      "Bash(game-doctor:*)",
+      "Bash(game-arcade:*)",
+      "Bash(game-archaeology:*)",
+      "Bash(open-game:*)",
+      "Bash(share-game:*)",
+      "Bash(kenney-find:*)",
+      "Bash(import-web-games:*)",
+
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(open:*)",
+
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+
+      "Bash(godot:*)",
+
+      "Read(~/Games/**)",
+      "Read(~/GameAssets/**)",
+      "Edit(~/Games/**)",
+      "Write(~/Games/**)"
+    ],
+
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(**/.env)",
+
+      "Bash(sudo:*)",
+      "Bash(rm:*)",
+      "Bash(rmdir:*)",
+      "Bash(chmod:*)",
+      "Bash(chown:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(nc:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git clean:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

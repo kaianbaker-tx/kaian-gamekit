@@ -42,6 +42,232 @@ say ""
 step "Making the folder..."
 mkdir -p "$GAMES"
 
+# ------------------------------------------------------------------ web game
+# A one-file web game. No engine, no build, no export - the file IS the game,
+# and GitHub Pages serves it straight from the top of the repo.
+if [ "$TEMPLATE" = "web" ]; then
+  mkdir -p "$DIR/shots"
+
+  cat > "$DIR/index.html" <<'WEBSTART'
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GAME_NAME</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0e0d16; color: #f2f0ff; overflow: hidden;
+    font: 16px/1.5 system-ui, -apple-system, "Helvetica Neue", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    height: 100vh;
+  }
+  canvas { display: block; max-width: 100vw; max-height: 100vh; image-rendering: pixelated; }
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: rgba(14,13,22,.86); padding: 24px;
+  }
+  #overlay.hidden { display: none; }
+  h1 { font-size: clamp(38px, 9vw, 76px); letter-spacing: -.02em; color: #ffd166; }
+  p.tag { color: #9a94b8; margin: 6px 0 26px; font-size: 18px; }
+  .keys { color: #7d76a0; font-size: 15px; margin-top: 22px; line-height: 1.9; }
+  .keys b { color: #f2f0ff; font-weight: 600; }
+  .go { color: #6ee7a8; font-weight: 700; letter-spacing: .08em; font-size: 20px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+
+<div id="overlay">
+  <h1>GAME_NAME</h1>
+  <p class="tag">A game by Kaian</p>
+  <div class="go">PRESS ENTER TO START</div>
+  <div class="keys">
+    <b>&larr; &rarr;</b> move &nbsp;&middot;&nbsp; <b>Space</b> jump &nbsp;&middot;&nbsp; <b>R</b> restart
+  </div>
+</div>
+
+<script>
+// ───────────────────────────────────────────── the parts every game needs
+const canvas  = document.getElementById('c');
+const ctx     = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+
+// Which screen are we on? Every game has these three.
+let state = 'title';            // 'title' | 'playing' | 'over'
+
+// Everything the game needs to remember while you play lives in here.
+// Putting it all in one place means restarting is one line: reset().
+let game = {};
+
+function reset() {
+  game = {
+    x: 120,
+    y: 400,
+    vy: 0,
+    onGround: true,
+    score: 0,
+  };
+}
+
+// ───────────────────────────────────────────── keys
+// Held keys go in `keys`. One-off presses are handled in the listener.
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Enter' && state !== 'playing') start();
+  if (e.code === 'KeyR') start();
+  if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+function start() {
+  reset();
+  state = 'playing';
+  overlay.classList.add('hidden');
+}
+
+// ───────────────────────────────────────────── one step of the game
+// update() decides what happens. draw() decides what it looks like.
+// Keeping them apart is what stops a game turning into spaghetti.
+function update(dt) {
+  if (state !== 'playing') return;
+
+  const speed = 320;
+  if (keys['ArrowLeft'])  game.x -= speed * dt;
+  if (keys['ArrowRight']) game.x += speed * dt;
+
+  if (keys['Space'] && game.onGround) { game.vy = -520; game.onGround = false; }
+
+  game.vy += 1500 * dt;          // gravity
+  game.y  += game.vy  * dt;
+
+  const floor = canvas.height - 90;
+  if (game.y > floor) { game.y = floor; game.vy = 0; game.onGround = true; }
+
+  game.x = Math.max(20, Math.min(canvas.width - 20, game.x));
+}
+
+function draw() {
+  ctx.fillStyle = '#141225';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // ground
+  ctx.fillStyle = '#2b2745';
+  ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+
+  // you
+  ctx.fillStyle = '#ffd166';
+  ctx.fillRect(game.x - 18, game.y - 36, 36, 36);
+
+  ctx.fillStyle = '#f2f0ff';
+  ctx.font = '600 20px system-ui, sans-serif';
+  ctx.fillText('Score ' + game.score, 20, 36);
+}
+
+// ───────────────────────────────────────────── the loop
+// dt is how long the last frame took, in seconds. Multiplying movement by dt
+// is what makes the game run the same speed on a fast and a slow computer.
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+reset();
+draw();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
+WEBSTART
+
+  # Put his real title into the starter file.
+  /usr/bin/sed -i '' "s|GAME_NAME|$NAME|g" "$DIR/index.html" 2>/dev/null \
+    || sed -i "s|GAME_NAME|$NAME|g" "$DIR/index.html"
+
+  touch "$DIR/.nojekyll"
+  printf '.DS_Store\n' > "$DIR/.gitignore"
+
+  cat > "$DIR/README.md" <<MD
+# $NAME
+
+Play it here: **https://$GH_USER.github.io/$SLUG/**
+
+Made by Kaian. It's one single web page - \`index.html\` is the whole game.
+MD
+
+  cat > "$DIR/CLAUDE.md" <<MD
+# $NAME
+
+Kaian is 10. He reads everything you write, and he talks to you with
+voice-to-text, so his spelling will be off - work out what he meant and
+keep going instead of asking him to spell it again.
+
+## This game
+
+- It is ONE file: \`index.html\`. HTML, CSS and JavaScript all live in there.
+- Keep it one file. No build step, no npm, no extra folders.
+- \`update(dt)\` decides what happens, \`draw()\` decides what it looks like.
+  Keep those two jobs separate.
+- Multiply movement by \`dt\` so the game runs the same on any computer.
+- It is published straight from the top of the repo, so whatever is in
+  \`index.html\` on \`main\` is what people play.
+
+## Working with him
+
+- Short sentences. One idea at a time.
+- Say what you are about to do, then do it, then say what changed.
+- Never dump a wall of code at him. Explain the one line that matters.
+- \`game-save "what changed"\` after anything that works, using HIS words.
+  \`game-undo\` goes back to an earlier save. Nothing is ever lost.
+MD
+
+  step "Saving the first version..."
+  cd "$DIR"
+  git init -q -b main
+  git add -A
+  # Same fallback identity the rest of the kit uses, so a Mac that has
+  # never had `git config --global user.name` set can still save.
+  git -c user.name="Kaian" -c user.email="kaian@local" commit -q -m "Start $NAME"
+
+  if gh auth status >/dev/null 2>&1; then
+    step "Putting it on GitHub..."
+    if gh repo create "$GH_USER/$SLUG" --public --source=. --remote=origin --push >/dev/null 2>&1; then
+      say "  Repo:  https://github.com/$GH_USER/$SLUG"
+      gh api -X POST "repos/$GH_USER/$SLUG/pages" \
+        -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 \
+        || gh api -X PUT "repos/$GH_USER/$SLUG/pages" \
+        -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 || true
+      say "  Web page:  https://$GH_USER.github.io/$SLUG/"
+    else
+      say "  (Could not make the GitHub repo - maybe it already exists.)"
+    fi
+  else
+    say ""
+    say "  GitHub is not logged in yet, so this game is only on this laptop."
+    say "  Ask Dad to run:  gh auth login"
+  fi
+
+  ln -sfn "$DIR" "$HOME/Desktop/$NAME" 2>/dev/null || true
+
+  say ""
+  say "  Done. Open index.html in your browser and it plays right now."
+  say ""
+  say "  Save a version:  game-save \"what changed\""
+  say "  Go back:         game-undo"
+  say "  Put it online:   share-game"
+  say ""
+  exit 0
+fi
+
+
 if [ "$TEMPLATE" != "blank" ]; then
   SRC="$TEMPLATES/$TEMPLATE"
   [ -d "$SRC" ] || die "No template called '$TEMPLATE'. Try: ls $TEMPLATES"
@@ -194,6 +420,8 @@ keep going instead of asking him to spell it again.
 - Say what you are about to do, then do it, then say what changed.
 - When something breaks, say what broke in plain words and fix it.
 - Never dump a wall of code at him. Explain the one line that matters.
+- \`game-save "what changed"\` after anything that works, using HIS words.
+  \`game-undo\` goes back to an earlier save. Nothing is ever lost.
 
 ## This game
 
@@ -221,7 +449,7 @@ step "Saving the first version..."
 cd "$DIR"
 git init -q -b main
 git add -A
-git commit -q -m "Start $NAME"
+git -c user.name="Kaian" -c user.email="kaian@local" commit -q -m "Start $NAME"
 
 # ---------------------------------------------------------------- github
 if gh auth status >/dev/null 2>&1; then

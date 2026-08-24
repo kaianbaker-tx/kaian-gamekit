@@ -141,6 +141,8 @@ Work out what he meant. Short sentences, one idea at a time.
 - Godot 4.7. The web build goes to \`docs/\` and is published on GitHub Pages.
 - Find art with \`kenney-find <word>\`, copy it in with \`--grab\`.
 - Publish with \`share-game\`.
+- \`game-save "what changed"\` after anything that works, using HIS words.
+  \`game-undo\` goes back to an earlier save. Nothing is ever lost.
 - Keep \`thread_support=false\` in export_presets.cfg or the web page is black.
 MD
     fi

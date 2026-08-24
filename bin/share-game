@@ -3,7 +3,51 @@
 set -uo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/game-lib.sh"
 
-[ -f project.godot ] || { echo "Open your game folder first, then try again."; exit 1; }
+[ -f project.godot ] || [ -f index.html ] || {
+  echo "Open your game folder first, then try again."; exit 1; }
+
+# ------------------------------------------------------------------ web game
+# A one-file web game has nothing to build - the file is already the page.
+# Save it, push it, hand over the link.
+if [ ! -f project.godot ] && [ -f index.html ]; then
+  NAME="$(grep -o -m1 '<title>[^<]*</title>' index.html 2>/dev/null | sed 's/<[^>]*>//g')"
+  [ -n "$NAME" ] || NAME="$(basename "$PWD")"
+
+  touch .nojekyll
+  echo ""
+  echo "  Saving your changes..."
+  git add -A
+  git diff --cached --quiet || \
+    git -c user.name="Kaian" -c user.email="kaian@local" commit -q -m "Update $NAME"
+
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    echo ""; echo "  This game isn't on GitHub yet, so there's no link."
+    echo "  Ask Dad to run:  gh auth login"; echo ""; exit 0
+  fi
+
+  echo "  Sending it to GitHub..."
+  BR="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; [ -n "$BR" ] || BR=main
+  git push -q -u origin "$BR" 2>/dev/null || {
+    echo "  Couldn't send it. Ask Dad to check:  gh auth status"; exit 1; }
+
+  REMOTE="$(git remote get-url origin)"
+  STRIPPED="${REMOTE%.git}"; REPO="${STRIPPED##*/}"
+  REST="${STRIPPED%/$REPO}";  OWNER="${REST##*[:/]}"
+  URL="https://$OWNER.github.io/$REPO/"
+  command -v pbcopy >/dev/null && printf '%s' "$URL" | pbcopy
+
+  cat <<MSG
+
+  Your game is online!
+
+      $URL
+
+  (The link is copied - just paste it to Dad.)
+  If it looks old, wait a minute and refresh.
+
+MSG
+  exit 0
+fi
 
 GODOT="$(find_godot)" || {
   cat <<'MSG'

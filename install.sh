@@ -7,14 +7,18 @@ BIN="$HOME/bin"
 GAMES="$HOME/Games"
 ASSETS="$HOME/GameAssets"
 TEMPLATES="$ASSETS/templates"
-SKILLS="$HOME/.claude/skills"
+# Kaian runs Claude through the `kaian` launcher, which points
+# CLAUDE_CONFIG_DIR at ~/.claude-kaian. Install the skills into both
+# places so they work whichever way Claude is started.
+CONFIG_DIRS="$HOME/.claude $HOME/.claude-kaian"
 
 echo ""
 echo "  Setting up Kaian's game kit"
 echo "  =========================="
 
 # 1 ---------------------------------------------------------------- folders
-mkdir -p "$BIN" "$GAMES" "$TEMPLATES" "$SKILLS"
+mkdir -p "$BIN" "$GAMES" "$TEMPLATES"
+for cfg in $CONFIG_DIRS; do mkdir -p "$cfg/skills"; done
 echo "  [ok] folders"
 
 # 2 ---------------------------------------------------------------- commands
@@ -70,12 +74,27 @@ clone_kit scene      Starter-Kit-Basic-Scene
 echo "  [ok] templates in $TEMPLATES"
 
 # 5 ---------------------------------------------------------------- skills
-for d in "$HERE"/skills/*/; do
-  n="$(basename "$d")"
-  rm -rf "$SKILLS/$n"
-  cp -R "$d" "$SKILLS/$n"
+for cfg in $CONFIG_DIRS; do
+  for d in "$HERE"/skills/*/; do
+    n="$(basename "$d")"
+    rm -rf "$cfg/skills/$n"
+    cp -R "$d" "$cfg/skills/$n"
+  done
 done
 echo "  [ok] Claude skills installed"
+
+# 5b -------------------------------------------------------------- guardrails
+# Kaian's own Claude gets a settings file that lets the game commands run
+# without nagging him, and makes everything else stop and ask. Never
+# overwritten - if it's already there, whatever is in it is deliberate.
+KSET="$HOME/.claude-kaian/settings.json"
+if [ ! -f "$KSET" ]; then
+  mkdir -p "$(dirname "$KSET")"
+  cp "$HERE/settings/kaian-settings.json" "$KSET"
+  echo "  [ok] Kaian's Claude settings installed"
+else
+  echo "  [--] Kaian's Claude settings already exist - left alone"
+fi
 
 # 6 ---------------------------------------------------------------- index
 if [ -d "$ASSETS/Kenney/2D assets" ]; then
@@ -103,6 +122,10 @@ cat <<'MSG'
   Then, to let him publish games, run:
     gh auth login
 
+  Kaian starts Claude by typing:
+    kaian
+  That keeps his chats in his own space, separate from yours.
+
   Commands he can use:
     new-game "Spider Smash"     make a new game
     open-game                   pick a game and open it
@@ -111,6 +134,8 @@ cat <<'MSG'
     share-game                  put it online and get the link
     game-arcade --push          put ALL his games on one page
     game-idea                   three things he could make next
+    game-save "what changed"    save a version you can come back to
+    game-undo                   go back to an earlier save
     import-web-games <folder>   rescue loose .html games into ~/Games
     game-shot "added jumping"   save a picture for the devlog
     fix-games                   tidy up the games that already exist

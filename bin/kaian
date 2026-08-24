@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# kaian - start Claude in Kaian's own space.
+#
+# Everything Claude remembers - past chats, settings, skills - lives in
+# ~/.claude-kaian instead of ~/.claude. So his chat list on the side only
+# ever shows his own games, and never any of Dad's work.
+#
+# Same Mac, same login. Nothing to sign into again.
+set -uo pipefail
+
+export CLAUDE_CONFIG_DIR="$HOME/.claude-kaian"
+mkdir -p "$CLAUDE_CONFIG_DIR"
+
+find_claude() {
+  local c
+  for c in /opt/homebrew/bin/claude /usr/local/bin/claude \
+           "$HOME/.claude/local/claude" "$HOME/.local/bin/claude"; do
+    [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  c="$(command -v claude 2>/dev/null)"
+  [ -n "$c" ] && { printf '%s' "$c"; return 0; }
+  return 1
+}
+
+CLAUDE="$(find_claude)" || {
+  cat <<'MSG'
+
+  I can't find the claude command on this Mac.
+
+  Ask Dad to check that Claude Code is installed, then try again.
+
+MSG
+  exit 1; }
+
+# Start in the Games folder so his chats group by game.
+cd "$HOME/Games" 2>/dev/null || cd "$HOME"
+
+exec "$CLAUDE" "$@"

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# game-undo  - put the game back to how it was at an earlier save.
+#
+# This never destroys anything. Before going back it saves whatever you have
+# right now, so "going back" is itself just another save you can undo.
+set -uo pipefail
+
+[ -f project.godot ] || [ -f index.html ] || {
+  echo "  Open your game folder first, then try again."; exit 1; }
+[ -d .git ] || { echo "  This game has no saves yet. Make one:  game-save"; exit 1; }
+git rev-parse HEAD >/dev/null 2>&1 || { echo "  This game has no saves yet."; exit 1; }
+
+echo ""
+echo "  Your saves, newest first:"
+echo ""
+
+i=0
+SHAS=()
+MSGS=()
+while IFS='|' read -r sha when msg; do
+  i=$((i+1))
+  SHAS[$i]="$sha"
+  MSGS[$i]="$msg"
+  printf '   %2d) %-16s %s\n' "$i" "$when" "$msg"
+done < <(git log -15 --date=format:'%b %-d, %-I:%M%p' --pretty='%H|%ad|%s')
+
+if [ "$i" = "0" ]; then echo "   (none yet)"; echo ""; exit 0; fi
+
+echo ""
+printf '  Go back to which one? (a number, or press return to stay where you are)  '
+read -r n
+case "${n:-}" in
+  '' ) echo ""; echo "  Staying put. Nothing changed."; echo ""; exit 0 ;;
+  *[!0-9]* ) echo "  That's not a number."; exit 1 ;;
+esac
+[ "$n" -ge 1 ] && [ "$n" -le "$i" ] || { echo "  There's no save number $n."; exit 1; }
+
+TARGET="${SHAS[$n]}"
+LABEL="${MSGS[$n]}"
+
+# Step 1: never lose what he has right now, even if he hasn't saved it.
+git add -A
+if ! git diff --cached --quiet; then
+  git -c user.name="Kaian" -c user.email="kaian@local" \
+      commit -q -m "Before going back to: $LABEL"
+  echo ""
+  echo "  (Saved what you had first, just in case.)"
+fi
+
+# Step 2: make the folder look exactly like it did at that save. Files that
+# didn't exist back then are removed - they're still in the save from step 1.
+git rm -rq --cached . >/dev/null 2>&1
+git checkout "$TARGET" -- . >/dev/null 2>&1 || {
+  echo "  Couldn't go back. Show this to Dad."; exit 1; }
+git clean -fdq >/dev/null 2>&1
+git add -A
+
+if git diff --cached --quiet; then
+  echo ""
+  echo "  You were already at that save. Nothing changed."
+  echo ""
+  exit 0
+fi
+
+git -c user.name="Kaian" -c user.email="kaian@local" \
+    commit -q -m "Went back to: $LABEL"
+
+cat <<MSG
+
+  Done. Your game is back to how it was at:
+
+      $LABEL
+
+  Nothing was lost - that newer version is still in your saves, so
+  game-undo can bring it forward again.
+
+MSG

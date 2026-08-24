@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# game-save ["what changed"]  - save a snapshot you can come back to.
+#
+# Every save is a place you can return to later with game-undo. Nothing is
+# ever thrown away, so saving often costs you nothing and can only help.
+set -uo pipefail
+
+[ -f project.godot ] || [ -f index.html ] || {
+  echo "  Open your game folder first, then try again."; exit 1; }
+
+[ -d .git ] || git init -q -b main
+
+NOTE="${1:-}"
+if [ -z "$NOTE" ]; then
+  echo ""
+  echo "  In one sentence - what changed since last time?"
+  printf '  > '
+  IFS= read -r NOTE
+fi
+
+# The note is the point. A snapshot you can't identify is one you'll never
+# go back to, so an empty note is refused rather than filled in for him.
+if [ -z "$NOTE" ]; then
+  echo ""
+  echo "  A save needs a note, or later you won't know which one this was."
+  echo "  Try again and say what you changed."
+  echo ""
+  exit 1
+fi
+
+git add -A
+if git diff --cached --quiet; then
+  echo ""
+  echo "  Nothing has changed since your last save."
+  echo ""
+  exit 0
+fi
+
+git -c user.name="Kaian" -c user.email="kaian@local" commit -q -m "$NOTE" || {
+  echo "  Couldn't save. Show this to Dad."; exit 1; }
+
+N="$(git rev-list --count HEAD)"
+echo ""
+echo "  Saved. That's save #$N:  $NOTE"
+echo "  Don't like it later?  game-undo"
+echo ""

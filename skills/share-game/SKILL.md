@@ -8,6 +8,13 @@ description: Put a game online and get a link to send to someone. Use when Kaian
 Sharing a link is his favourite part. Make it fast and never make him wait
 on a wall of text.
 
+**Wait to be asked.** Don't offer, don't hint, don't say "want to share it?".
+He asks for this himself, every time. Suggesting it early turns a session
+about making the game into a session about finishing it.
+
+Works for both kinds of game: a Godot project builds a web version into
+`docs/` first, a one-file web game is already the page and just gets pushed.
+
 ## Steps
 
 1. From inside the game folder, run:
@@ -44,3 +51,9 @@ on a wall of text.
 Offer once, then drop it:
 
 > Want me to save a picture of it for your devlog? (`game-shot`)
+
+Then put it on the arcade page with the rest of them:
+
+```
+game-arcade --push
+```

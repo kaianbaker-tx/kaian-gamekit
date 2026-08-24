@@ -20,8 +20,12 @@ hand and never guess a path - always search the index.
 
    `--kind` is one of `image sprite sound model font map`.
 
-2. **Show him what came back, in his words.** Do not paste raw paths at him.
-   Say *"I found a spider that can walk, get hit, and die - 5 pictures."*
+2. **Show him the actual pictures.** Do not describe art to a 10-year-old and
+   do not paste raw paths at him. Use the Read tool on the PNG files that came
+   back so they appear in front of him, then say what they are in his words:
+   *"I found a spider that can walk, get hit, and die. Which one is yours?"*
+
+   Three or four at a time, never fifteen. He picks by looking, not by reading.
 
 3. **Grab the ones he wants.**
 
