@@ -1,0 +1,218 @@
+#!/usr/bin/env node
+// arcade-shots [name...]  - take a fresh picture of every game that's online.
+//
+// Opens each game's web page in a hidden Chrome, waits for it to load, and
+// saves a screenshot to ~/Arcade/auto-shots/<slug>.png. game-arcade uses the
+// newest picture it can find, so these keep the arcade cards up to date.
+//
+//   arcade-shots               every game in ~/Games
+//   arcade-shots "Night"       only games whose name contains "Night"
+//
+// Runs every morning from arcade-daily (com.kaian.arcade-daily), which then
+// pushes the arcade. No npm packages: it talks to Chrome over its debugging port.
+
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { spawn, execFileSync } = require("child_process");
+
+const HOME = os.homedir();
+const GAMES = path.join(HOME, "Games");
+const OUT = path.join(HOME, "Arcade", "auto-shots");
+const CHROME = process.env.CHROME_BIN ||
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const MAX_LOAD_MS = 60000;     // give up waiting for a slow game after this
+const SETTLE_MS = 4000;        // then let it draw a few frames
+const MIN_COLOURS = 4;         // fewer than this is a blank or black screen
+const filters = process.argv.slice(2).map((s) => s.toLowerCase());
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Must match slugify() in game-arcade, or the card won't find its picture.
+const slugify = (s) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+function games() {
+  const list = [];
+  for (const dir of fs.readdirSync(GAMES)) {
+    const full = path.join(GAMES, dir);
+    const hasShot = () => fs.existsSync(path.join(full, "shots")) &&
+      fs.readdirSync(path.join(full, "shots")).some((f) => f.endsWith(".png"));
+    if (!fs.statSync(full).isDirectory()) continue;
+    let name;
+    const godot = path.join(full, "project.godot");
+    if (fs.existsSync(godot)) {
+      const m = fs.readFileSync(godot, "utf8").match(/^config\/name="(.*)"/m);
+      name = m ? m[1] : dir;
+    } else if (fs.existsSync(path.join(full, "index.html"))) {
+      name = dir;
+    } else continue;
+
+    let remote = "";
+    try {
+      remote = execFileSync("git", ["-C", full, "remote", "get-url", "origin"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {}
+    const m = remote.replace(/\.git$/, "").match(/[:/]([^/:]+)\/([^/]+)$/);
+    const g = { name, slug: slugify(name), hasShot: hasShot() };
+    if (m) g.url = `https://${m[1]}.github.io/${m[2]}/`;
+    list.push(g);
+  }
+  return list.filter((g) =>
+    !filters.length || filters.some((f) => g.name.toLowerCase().includes(f)));
+}
+
+// A tiny Chrome DevTools client: one WebSocket per tab.
+function cdp(wsUrl) {
+  const ws = new WebSocket(wsUrl);
+  let id = 0;
+  const pending = new Map();
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+    }
+  };
+  const ready = new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
+  return {
+    ready,
+    send: (method, params = {}) => new Promise((resolve, reject) => {
+      const n = ++id;
+      pending.set(n, { resolve, reject });
+      ws.send(JSON.stringify({ id: n, method, params }));
+    }),
+    close: () => ws.close(),
+  };
+}
+
+async function startChrome() {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "arcade-shots-"));
+  const proc = spawn(CHROME, [
+    "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+    "--no-first-run", "--no-default-browser-check", "--mute-audio",
+    "--hide-scrollbars", "--window-size=1280,800",
+    // Software WebGL, so Godot draws even without a real GPU.
+    "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
+    "--autoplay-policy=no-user-gesture-required",
+  ], { stdio: "ignore" });
+  const portFile = path.join(profile, "DevToolsActivePort");
+  for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) await sleep(100);
+  const port = fs.readFileSync(portFile, "utf8").split("\n")[0];
+  return { proc, port, profile };
+}
+
+// For a game that's still an empty screen: its name on a colourful card, so
+// the arcade never shows a grey box. A real picture replaces it once the
+// game draws something.
+function titleCard(name) {
+  const esc = name.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const html = `<!doctype html><html><body style="margin:0;width:1280px;height:800px;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    background:linear-gradient(135deg,hsl(${h},70%,30%),hsl(${(h + 60) % 360},70%,15%));
+    font-family:system-ui,-apple-system,sans-serif;color:#fff">
+    <div style="font-size:120px;font-weight:900;letter-spacing:-2px;text-align:center;
+      text-shadow:0 8px 0 rgba(0,0,0,.35);padding:0 60px">${esc}</div>
+    <div style="font-size:36px;opacity:.7;margin-top:24px">coming soon</div>
+    </body></html>`;
+  return "data:text/html;base64," + Buffer.from(html).toString("base64");
+}
+
+// Godot's web page shows a loading screen (#status) until the game is ready.
+// Other pages don't have one, so they count as loaded straight away.
+const LOADED = `(() => {
+  const el = document.getElementById("status");
+  if (document.readyState !== "complete") return false;
+  if (!el) return true;
+  const cs = getComputedStyle(el);
+  return cs.display === "none" || cs.visibility === "hidden" || el.hidden;
+})()`;
+
+async function shoot(port, url, settle = SETTLE_MS) {
+  const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
+  const tab = await res.json();
+  const c = cdp(tab.webSocketDebuggerUrl);
+  await c.ready;
+  try {
+    await c.send("Emulation.setDeviceMetricsOverride",
+      { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await c.send("Page.navigate", { url });
+    const start = Date.now();
+    while (Date.now() - start < MAX_LOAD_MS) {
+      await sleep(500);
+      const r = await c.send("Runtime.evaluate", { expression: LOADED, returnByValue: true })
+        .catch(() => null);
+      if (r && r.result && r.result.value === true) break;
+    }
+    await sleep(settle);
+    const { data } = await c.send("Page.captureScreenshot", { format: "png" });
+    // Count the colours in a shrunk copy of the picture, using the page's
+    // own canvas, so a grey or black screen can be told from a real game.
+    const { result } = await c.send("Runtime.evaluate", {
+      awaitPromise: true, returnByValue: true,
+      expression: `new Promise((ok) => {
+        const img = new Image();
+        img.onload = () => {
+          const cv = document.createElement("canvas");
+          cv.width = 64; cv.height = 40;
+          const cx = cv.getContext("2d");
+          cx.drawImage(img, 0, 0, 64, 40);
+          const px = cx.getImageData(0, 0, 64, 40).data, seen = new Set();
+          for (let i = 0; i < px.length; i += 4)
+            seen.add((px[i] >> 4) + "," + (px[i + 1] >> 4) + "," + (px[i + 2] >> 4));
+          ok(seen.size);
+        };
+        img.onerror = () => ok(-1);
+        img.src = "data:image/png;base64,${data}";
+      })`,
+    }).catch(() => ({ result: {} }));
+    return { png: Buffer.from(data, "base64"), colours: result.value ?? -1 };
+  } finally {
+    c.close();
+    await fetch(`http://127.0.0.1:${port}/json/close/${tab.id}`).catch(() => {});
+  }
+}
+
+(async () => {
+  fs.mkdirSync(OUT, { recursive: true });
+  const list = games();
+  console.log("\n  Taking pictures of your games...\n");
+  const chrome = await startChrome();
+  let saved = 0;
+  try {
+    for (const g of list) {
+      const label = g.name.padEnd(28);
+      if (!g.url) { console.log(`   ${label} not on GitHub yet - skipped`); continue; }
+      const head = await fetch(g.url, { method: "HEAD" }).catch(() => null);
+      if (!head || !head.ok) { console.log(`   ${label} not online yet - skipped`); continue; }
+      try {
+        const { png, colours } = await shoot(chrome.port, g.url);
+        if (colours >= 0 && colours < MIN_COLOURS) {
+          const out = path.join(OUT, `${g.slug}.png`);
+          if (g.hasShot || fs.existsSync(out)) {
+            console.log(`   ${label} came out blank - kept the old picture`);
+          } else {
+            fs.writeFileSync(out, (await shoot(chrome.port, titleCard(g.name), 1000)).png);
+            saved++;
+            console.log(`   ${label} is an empty screen - made a title card`);
+          }
+          continue;
+        }
+        fs.writeFileSync(path.join(OUT, `${g.slug}.png`), png);
+        saved++;
+        console.log(`   ${label} got a new picture`);
+      } catch (e) {
+        console.log(`   ${label} couldn't take a picture (${e.message})`);
+      }
+    }
+  } finally {
+    chrome.proc.kill();
+    await sleep(300);
+    fs.rmSync(chrome.profile, { recursive: true, force: true });
+  }
+  console.log(`\n  ${saved} new picture${saved === 1 ? "" : "s"} in ${OUT}`);
+  console.log("  Run  game-arcade --push  to put them on the arcade.\n");
+})();

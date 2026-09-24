@@ -31,6 +31,7 @@ Then two manual steps `install.sh` will remind you about:
 | `kenney-find spider --grab` | copy them in, write CREDITS.md |
 | `share-game` | build web version, push, copy link to clipboard |
 | `game-arcade` | one page with every game on it; `--push` puts it online |
+| `arcade-shots` | fresh picture of every online game for the arcade; runs every morning at 7 with `game-arcade --push` |
 | `game-idea` | three things he could make next; `--go` makes one |
 | `import-web-games <folder>` | turn loose one-file .html games into real games with their own repos |
 | `game-save "what changed"` | save a version he can come back to |

@@ -99,8 +99,9 @@ for DIR in "$GAMES"/*; do
   fi
   [ "$PLAYABLE" = "1" ] && LIVE=$((LIVE+1))
 
-  # Newest screenshot becomes the picture on the card.
-  SHOT="$(ls -t "$DIR"/shots/*.png 2>/dev/null | head -1)"
+  # Newest picture becomes the card: one of his own game-shots, or the one
+  # arcade-shots takes of the live page every morning.
+  SHOT="$(ls -t "$DIR"/shots/*.png "$ARCADE/auto-shots/$SLUG.png" 2>/dev/null | head -1)"
   THUMB=""
   if [ -n "$SHOT" ]; then
     cp "$SHOT" "$ARCADE/shots/$SLUG.png" 2>/dev/null && THUMB="shots/$SLUG.png"
@@ -213,6 +214,8 @@ cat > "$ARCADE/index.html" <<HTML
 HTML
 
 touch "$ARCADE/.nojekyll"
+# auto-shots/ is arcade-shots' working folder; the page uses the copies in shots/.
+grep -qx 'auto-shots/' "$ARCADE/.gitignore" 2>/dev/null || echo 'auto-shots/' >> "$ARCADE/.gitignore"
 
 echo ""
 if [ "$HAVE_GH" = "0" ]; then
@@ -267,7 +270,12 @@ git push -q -u origin main 2>/dev/null || {
   echo "  Couldn't send it. Check:  gh auth status"; exit 1; }
 
 URL="https://$GH_USER.github.io/arcade/"
-command -v pbcopy >/dev/null && printf '%s' "$URL" | pbcopy
+# Only copy the link when someone's at the keyboard - not from the 7am job.
+COPIED=""
+if [ -t 1 ] && command -v pbcopy >/dev/null; then
+  printf '%s' "$URL" | pbcopy
+  COPIED="  (The link is copied - paste it to anyone.)"
+fi
 
 cat <<MSG
 
@@ -275,7 +283,7 @@ cat <<MSG
 
       $URL
 
-  (The link is copied - paste it to anyone.)
+$COPIED
   A brand new arcade can take a minute to show up.
 
 MSG

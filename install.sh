@@ -96,6 +96,30 @@ else
   echo "  [--] Kaian's Claude settings already exist - left alone"
 fi
 
+# 5c ------------------------------------------------------- daily arcade
+# Every morning at 7: fresh pictures of every game, and the arcade pushed.
+# If the laptop is asleep at 7, it runs when it wakes up.
+PLIST="$HOME/Library/LaunchAgents/com.kaian.arcade-daily.plist"
+mkdir -p "$(dirname "$PLIST")"
+cat > "$PLIST" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>             <string>com.kaian.arcade-daily</string>
+  <key>ProgramArguments</key>  <array><string>$BIN/arcade-daily</string></array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key>   <string>$HOME/Library/Logs/arcade-daily.log</string>
+  <key>StandardErrorPath</key> <string>$HOME/Library/Logs/arcade-daily.log</string>
+  <key>ProcessType</key>       <string>Background</string>
+</dict>
+</plist>
+PL
+launchctl bootout "gui/$(id -u)/com.kaian.arcade-daily" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+echo "  [ok] arcade pictures update every morning at 7"
+
 # 6 ---------------------------------------------------------------- index
 if [ -d "$ASSETS/Kenney/2D assets" ]; then
   echo "  ... reading every piece of art and sound (one time)"
@@ -133,6 +157,7 @@ cat <<'MSG'
     kenney-find spider --grab   copy them into the game
     share-game                  put it online and get the link
     game-arcade --push          put ALL his games on one page
+    arcade-shots                new pictures of every game (runs every morning)
     game-idea                   three things he could make next
     game-save "what changed"    save a version you can come back to
     game-undo                   go back to an earlier save

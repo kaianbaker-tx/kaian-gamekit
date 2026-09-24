@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# arcade-daily - fresh pictures of every game, then put the arcade online.
+# Runs every morning from launchd (com.kaian.arcade-daily); log at
+# ~/Library/Logs/arcade-daily.log. Safe to run by hand too.
+export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+echo "=== $(date)"
+arcade-shots
+game-arcade --push
