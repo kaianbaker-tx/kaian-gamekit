@@ -197,11 +197,14 @@ cat > "$ARCADE/index.html" <<HTML
   .play { color: #6ee7a8; font-weight: 700; letter-spacing: .06em; }
   .soon { color: #7d76a0; }
   footer { text-align: center; color: #6b648c; margin-top: 44px; font-size: 14px; }
+  .counter { display: block; margin: -24px auto 32px; height: 20px; }
 </style>
 </head>
 <body>
   <h1>Kaian's Arcade</h1>
   <p class="sub">$LIVE of $COUNT games online - click one to play.</p>
+  <!-- Visit counter from hits.sh: free, no account, counts every page load. -->
+  <img class="counter" alt="visits" src="https://hits.sh/$GH_USER.github.io/arcade.svg?label=visits&amp;color=7c5cff&amp;labelColor=2e2a45">
   <div class="grid">$CARDS
   </div>
   <footer>Made with Godot. Art and sounds by Kenney.</footer>
